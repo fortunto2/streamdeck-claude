@@ -50,25 +50,28 @@ BOTTOM_KEYS = list(range(24, 32))  # row 4 — decorative
 # Orc voices
 PEON_DIR = os.path.expanduser("~/.claude/hooks/peon-ping/packs")
 ORC_VOICES = {
+    # Simon Says = GLaDOS (Portal — she literally tells you what to do)
     "start": [
-        "peon/sounds/PeonReady1.wav",
-        "dota2_axe/sounds/AxeIsReady.mp3",
-        "peasant/sounds/PeasantReady1.wav",
+        "glados/sounds/Hello.mp3",
+        "glados/sounds/CanYouHearMe.mp3",
+        "glados/sounds/GoodNews.mp3",
+        "glados/sounds/IKnowYoureThere.mp3",
     ],
     "fail": [
-        "peon/sounds/PeonDeath.wav",
-        "peon/sounds/PeonAngry1.wav",
-        "dota2_axe/sounds/YouGetNothing.mp3",
+        "glados/sounds/WompWomp.mp3",
+        "glados/sounds/Unbelievable.mp3",
+        "glados/sounds/WhereDidYourLifeGoWrong.mp3",
+        "glados/sounds/ItAintWorkin.mp3",
     ],
     "milestone": [
-        "peon/sounds/PeonWarcry1.wav",
-        "dota2_axe/sounds/ComeAndGetIt.mp3",
-        "dota2_axe/sounds/AxeManComes.mp3",
+        "glados/sounds/Excellent.mp3",
+        "glados/sounds/Fantastic.mp3",
+        "glados/sounds/KeepDoing.mp3",
+        "glados/sounds/Yes.mp3",
     ],
     "newbest": [
-        "dota2_axe/sounds/ISaidGoodDaySir.mp3",
-        "dota2_axe/sounds/CutAbove.mp3",
-        "peon/sounds/PeonYes1.wav",
+        "glados/sounds/Congratulations.mp3",
+        "glados/sounds/Excellent.mp3",
     ],
 }
 _last_orc_time: float = 0

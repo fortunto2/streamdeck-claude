@@ -76,6 +76,27 @@ GAMES = [
         "script": "simon_game",
         "pos": 9,
     },
+    {
+        "title": "REACT",
+        "subtitle": "SPEED",
+        "bg": "#065f46",
+        "script": "reaction_game",
+        "pos": 10,
+    },
+    {
+        "title": "SNAKE",
+        "subtitle": "GAME",
+        "bg": "#14532d",
+        "script": "snake_game",
+        "pos": 11,
+    },
+    {
+        "title": "MEMORY",
+        "subtitle": "MATCH",
+        "bg": "#1e3a5f",
+        "script": "memory_game",
+        "pos": 12,
+    },
 ]
 
 
@@ -136,13 +157,18 @@ class Arcade:
             except Exception:
                 pass
 
-        # Create game instance
-        if script == "beaver_game":
-            game = mod.BeaverGame(self.deck)
-        elif script == "simon_game":
-            game = mod.SimonGame(self.deck)
-        else:
+        # Create game instance — map script names to class names
+        class_map = {
+            "beaver_game": "BeaverGame",
+            "simon_game": "SimonGame",
+            "reaction_game": "ReactionGame",
+            "snake_game": "SnakeGame",
+            "memory_game": "MemoryGame",
+        }
+        cls_name = class_map.get(script)
+        if not cls_name or not hasattr(mod, cls_name):
             return
+        game = getattr(mod, cls_name)(self.deck)
 
         self.active_game = game
         self.active_module = mod

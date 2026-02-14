@@ -38,38 +38,35 @@ SFX_VOLUME = 0.3
 # ── orc voice lines (peon-ping packs) ───────────────────────────────
 PEON_DIR = os.path.expanduser("~/.claude/hooks/peon-ping/packs")
 ORC_VOICES = {
-    "start": [  # game start — ready/warcry lines
+    # Beaver Hunt = Peon + Peasant (Warcraft III vibes)
+    "start": [
         "peon/sounds/PeonReady1.wav",
         "peon/sounds/PeonWarcry1.wav",
+        "peasant/sounds/PeasantReady1.wav",
+        "peasant/sounds/PeasantYesAttack1.wav",
+    ],
+    "levelup": [
         "peon/sounds/PeonYesAttack1.wav",
         "peon/sounds/PeonYesAttack2.wav",
-        "dota2_axe/sounds/AxeIsReady.mp3",
-        "dota2_axe/sounds/GoodDayToFight.mp3",
-        "dota2_axe/sounds/LetTheCarnageBegin.mp3",
-        "peasant/sounds/PeasantReady1.wav",
-    ],
-    "levelup": [  # level up — aggressive/excited
         "peon/sounds/PeonYesAttack3.wav",
-        "peon/sounds/PeonWarcry1.wav",
-        "dota2_axe/sounds/ComeAndGetIt.mp3",
-        "dota2_axe/sounds/Forward.mp3",
-        "dota2_axe/sounds/ToBattle.mp3",
-        "dota2_axe/sounds/AxeManComes.mp3",
+        "peasant/sounds/PeasantYesAttack2.wav",
+        "peasant/sounds/PeasantYesAttack3.wav",
+        "peasant/sounds/PeasantYesAttack4.wav",
     ],
-    "gameover": [  # game over — death/angry
+    "gameover": [
         "peon/sounds/PeonDeath.wav",
         "peon/sounds/PeonAngry1.wav",
         "peon/sounds/PeonAngry2.wav",
-        "dota2_axe/sounds/FoughtBadly.mp3",
-        "dota2_axe/sounds/YouGetNothing.mp3",
-        "dota2_axe/sounds/RestForTheDead.mp3",
+        "peon/sounds/PeonAngry3.wav",
+        "peasant/sounds/PeasantAngry1.wav",
+        "peasant/sounds/PeasantAngry2.wav",
     ],
-    "newbest": [  # new record — victory
-        "dota2_axe/sounds/Culled.mp3",
-        "dota2_axe/sounds/CutAbove.mp3",
-        "dota2_axe/sounds/ISaidGoodDaySir.mp3",
+    "newbest": [
         "peon/sounds/PeonYes1.wav",
         "peon/sounds/PeonYes2.wav",
+        "peon/sounds/PeonYes3.wav",
+        "peasant/sounds/PeasantYes1.wav",
+        "peasant/sounds/PeasantYes2.wav",
     ],
 }
 
