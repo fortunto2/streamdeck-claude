@@ -93,7 +93,7 @@ buttons:
     type: action
     action: tmux_send
     command: /build
-    icon: build-action.png
+    icon: build.png
     label: Build
 
   - pos: 13
@@ -114,7 +114,7 @@ buttons:
     type: action
     action: tmux_send
     command: /pipeline
-    icon: pipeline-action.png
+    icon: pipeline.png
     label: Pipeline
 
   # ── Row 3: Tmux + Git Actions (positions 16-23) ───────────────
@@ -122,28 +122,28 @@ buttons:
     type: action
     action: tmux_select
     pane: "0"
-    icon: pane.png
+    icon: tmux.png
     label: Pane 1
 
   - pos: 17
     type: action
     action: tmux_select
     pane: "1"
-    icon: pane.png
+    icon: tmux.png
     label: Pane 2
 
   - pos: 18
     type: action
     action: tmux_select
     pane: "2"
-    icon: pane.png
+    icon: tmux.png
     label: Pane 3
 
   - pos: 19
     type: action
     action: tmux_select
     pane: "3"
-    icon: pane.png
+    icon: tmux.png
     label: Pane 4
 
   - pos: 20
@@ -194,7 +194,7 @@ buttons:
     type: action
     action: claude_p
     prompt: "lookup documentation using Context7 for the library in my clipboard"
-    icon: ctx7.png
+    icon: context7.png
     label: Ctx7
 
   - pos: 27
