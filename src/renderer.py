@@ -49,16 +49,37 @@ def render_button(
             pass
 
     if label:
+        lines = label.split("\n")
         try:
             font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 14)
+            small_font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 11)
         except OSError:
             font = ImageFont.load_default()
-        draw.text(
-            (size[0] // 2, size[1] - 8),
-            label,
-            font=font,
-            fill="white",
-            anchor="ms",
-        )
+            small_font = font
+
+        if len(lines) == 1:
+            draw.text(
+                (size[0] // 2, size[1] - 8),
+                label,
+                font=font,
+                fill="white",
+                anchor="ms",
+            )
+        else:
+            # Multi-line: first line = name (14pt), second = detail (11pt, dimmer)
+            draw.text(
+                (size[0] // 2, size[1] - 22),
+                lines[0],
+                font=font,
+                fill="white",
+                anchor="ms",
+            )
+            draw.text(
+                (size[0] // 2, size[1] - 6),
+                lines[1][:12],  # truncate long commands
+                font=small_font,
+                fill="#aaaaaa",
+                anchor="ms",
+            )
 
     return img

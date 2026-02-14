@@ -10,7 +10,7 @@ from pathlib import Path
 from StreamDeck.DeviceManager import DeviceManager
 from StreamDeck.ImageHelpers import PILHelper
 
-from src.actions import claude_p, shell_exec, tmux_select, tmux_send
+from src.actions import claude_p, shell_exec, tmux_select, tmux_send, tmux_switch
 from src.config import AppConfig, ButtonConfig, load_config
 from src.monitors import MonitorThread
 from src.renderer import render_button, status_to_color
@@ -39,6 +39,9 @@ class StreamDeckClaude:
         }
         self.brightness_level = 0
         self.brightness_levels = [30, 70, 100]
+        # Dynamic tmux session buttons: positions 16-23
+        self.tmux_session_range = range(16, 24)
+        self.tmux_sessions: list[dict] = []  # live session list
 
     def start(self):
         """Initialize deck and start monitoring."""
@@ -94,12 +97,17 @@ class StreamDeckClaude:
 
     def _on_state_change(self, new_state: dict):
         """Called by monitor thread when state changes."""
+        # Update static monitor buttons
         for btn in self.config.buttons:
             if btn.type != "monitor":
                 continue
             status = self._get_monitor_status(btn, new_state)
             if status:
                 self._render_button(btn, status)
+
+        # Update dynamic tmux session buttons (row 3)
+        sessions = new_state.get("tmux_sessions", [])
+        self._render_tmux_sessions(sessions)
 
     def _get_monitor_status(self, btn: ButtonConfig, state: dict) -> str | None:
         """Map a monitor button to its current status."""
@@ -134,9 +142,49 @@ class StreamDeckClaude:
             return "clean"
         return "unknown"
 
+    def _render_tmux_sessions(self, sessions: list[dict]):
+        """Render dynamic tmux session buttons on row 3."""
+        self.tmux_sessions = sessions
+        for i, pos in enumerate(self.tmux_session_range):
+            if i < len(sessions):
+                sess = sessions[i]
+                name = sess["name"]
+                cmd = sess["command"]
+                attached = sess["attached"]
+                # Truncate long names
+                if len(name) > 10:
+                    name = name[:9] + "…"
+                # Color: green=attached, blue=has activity, gray=idle
+                bg = "#22c55e" if attached else "#3b82f6"
+                # Show session name + command
+                label = f"{name}\n{cmd}"
+                icon_path = str(Path(__file__).parent.parent / "assets" / "tmux.png")
+                if not Path(icon_path).exists():
+                    icon_path = None
+                img = render_button(size=(96, 96), label=label, bg_color=bg, icon_path=icon_path)
+                native = PILHelper.to_native_key_format(self.deck, img)
+                with self.deck:
+                    self.deck.set_key_image(pos, native)
+            else:
+                # Clear unused session slots
+                img = render_button(size=(96, 96), label=None, bg_color="#111111")
+                native = PILHelper.to_native_key_format(self.deck, img)
+                with self.deck:
+                    self.deck.set_key_image(pos, native)
+
     def _on_key_change(self, deck, key: int, pressed: bool):
         """Handle physical button press."""
         if not pressed:
+            return
+
+        # Dynamic tmux session buttons
+        if key in self.tmux_session_range:
+            idx = key - self.tmux_session_range.start
+            if idx < len(self.tmux_sessions):
+                sess = self.tmux_sessions[idx]
+                if self.verbose:
+                    print(f"Button {key} pressed: switch to tmux '{sess['name']}'")
+                tmux_switch(sess["name"])
             return
 
         btn = self.button_map.get(key)
@@ -154,7 +202,13 @@ class StreamDeckClaude:
 
     def _handle_action(self, btn: ButtonConfig):
         """Execute a button action."""
-        tmux_target = f"{self.config.tmux.session}:{self.config.tmux.default_pane}"
+        # Dynamic default: use first attached tmux session, fallback to config
+        if self.tmux_sessions:
+            attached = [s for s in self.tmux_sessions if s["attached"]]
+            default_session = attached[0]["name"] if attached else self.tmux_sessions[0]["name"]
+        else:
+            default_session = self.config.tmux.session
+        tmux_target = f"{default_session}:{self.config.tmux.default_pane}"
 
         if btn.action == "tmux_send":
             cmd = btn.command or ""

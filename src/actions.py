@@ -27,3 +27,8 @@ def shell_exec(command: str) -> None:
 
 def tmux_select(pane: str) -> None:
     subprocess.run(["tmux", "select-pane", "-t", pane], timeout=5)
+
+
+def tmux_switch(session: str) -> None:
+    """Switch tmux client to a different session."""
+    subprocess.run(["tmux", "switch-client", "-t", session], timeout=5)

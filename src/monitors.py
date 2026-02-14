@@ -91,6 +91,55 @@ def check_tmux_panes() -> list[str]:
     return []
 
 
+def check_tmux_sessions() -> list[dict]:
+    """List tmux sessions with name, window count, and active pane command.
+
+    Returns list of dicts: {"name": str, "windows": int, "command": str, "attached": bool}
+    """
+    try:
+        result = subprocess.run(
+            ["tmux", "list-sessions", "-F",
+             "#{session_name}\t#{session_windows}\t#{session_attached}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode != 0:
+            return []
+        sessions = []
+        for line in result.stdout.strip().split("\n"):
+            if not line:
+                continue
+            parts = line.split("\t")
+            name = parts[0]
+            windows = int(parts[1]) if len(parts) > 1 else 1
+            attached = parts[2] == "1" if len(parts) > 2 else False
+            # Get active pane command for this session
+            cmd = _get_session_command(name)
+            sessions.append({
+                "name": name,
+                "windows": windows,
+                "command": cmd,
+                "attached": attached,
+            })
+        return sessions
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return []
+
+
+def _get_session_command(session_name: str) -> str:
+    """Get the current command running in the active pane of a session."""
+    try:
+        result = subprocess.run(
+            ["tmux", "display-message", "-t", session_name, "-p",
+             "#{pane_current_command}"],
+            capture_output=True, text=True, timeout=3,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    return "?"
+
+
 class MonitorThread(threading.Thread):
     """Background thread that polls all monitors at a fixed interval.
 
@@ -120,6 +169,7 @@ class MonitorThread(threading.Thread):
                 "pipeline": check_pipeline_state(),
                 **check_system(),
                 "tmux_panes": check_tmux_panes(),
+                "tmux_sessions": check_tmux_sessions(),
             }
             changed = False
             with self.lock:

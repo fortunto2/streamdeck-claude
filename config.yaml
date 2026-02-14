@@ -117,36 +117,13 @@ buttons:
     icon: pipeline.png
     label: Pipeline
 
-  # ── Row 3: Tmux + Git Actions (positions 16-23) ───────────────
-  - pos: 16
-    type: action
-    action: tmux_select
-    pane: "0"
-    icon: tmux.png
-    label: Pane 1
+  # ── Row 3: Dynamic Tmux Sessions (positions 16-23) ───────────
+  # Positions 16-23 are DYNAMIC — rendered by daemon from live tmux sessions.
+  # Shows session name + active command. Press to switch.
+  # No config entries needed — daemon handles these positions directly.
 
-  - pos: 17
-    type: action
-    action: tmux_select
-    pane: "1"
-    icon: tmux.png
-    label: Pane 2
-
-  - pos: 18
-    type: action
-    action: tmux_select
-    pane: "2"
-    icon: tmux.png
-    label: Pane 3
-
-  - pos: 19
-    type: action
-    action: tmux_select
-    pane: "3"
-    icon: tmux.png
-    label: Pane 4
-
-  - pos: 20
+  # ── Row 4: Git + Utilities (positions 24-31) ──────────────────
+  - pos: 24
     type: action
     action: claude_p
     prompt: "commit staged changes with a descriptive message"
@@ -154,62 +131,33 @@ buttons:
     icon: commit.png
     label: Commit
 
-  - pos: 21
+  - pos: 25
     type: action
     action: shell
     command: "git push"
     icon: push.png
     label: Push
 
-  - pos: 22
+  - pos: 26
     type: action
     action: shell
     command: "git pull --rebase"
     icon: pull.png
     label: Pull
 
-  - pos: 23
+  - pos: 27
     type: action
     action: tmux_send
     command: /ralph-loop
     icon: ralph.png
     label: Ralph
 
-  # ── Row 4: Utilities (positions 24-31) ─────────────────────────
-  - pos: 24
-    type: action
-    action: claude_p
-    prompt: "web search for the topic in my clipboard and summarize findings"
-    icon: search.png
-    label: Search
-
-  - pos: 25
+  - pos: 28
     type: action
     action: tmux_send
     command: /swarm
     icon: swarm.png
     label: Swarm
-
-  - pos: 26
-    type: action
-    action: claude_p
-    prompt: "lookup documentation using Context7 for the library in my clipboard"
-    icon: context7.png
-    label: Ctx7
-
-  - pos: 27
-    type: action
-    action: tmux_send
-    command: /seo-audit
-    icon: seo.png
-    label: SEO
-
-  - pos: 28
-    type: action
-    action: tmux_send
-    command: /content-gen
-    icon: content.png
-    label: Content
 
   - pos: 29
     type: action
