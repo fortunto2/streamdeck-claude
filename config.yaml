@@ -1,0 +1,231 @@
+# Stream Deck Claude — 32-button layout for Stream Deck XL (8x4)
+# Monitors poll in background, actions fire on press.
+
+deck:
+  brightness: 30
+  poll_interval: 3
+  project_dir: ~/startups/active/current
+
+tmux:
+  session: claude
+  default_pane: "0"
+
+buttons:
+  # ── Row 1: Monitoring (positions 0-7) ──────────────────────────
+  - pos: 0
+    type: monitor
+    monitor: git_status
+    icon: git.png
+    label: Git
+
+  - pos: 1
+    type: monitor
+    monitor: pipeline_state
+    icon: pipeline.png
+    label: Pipeline
+
+  - pos: 2
+    type: monitor
+    monitor: claude_session_1
+    icon: claude.png
+    label: Claude 1
+
+  - pos: 3
+    type: monitor
+    monitor: claude_session_2
+    icon: claude.png
+    label: Claude 2
+
+  - pos: 4
+    type: monitor
+    monitor: test_status
+    icon: test.png
+    label: Tests
+
+  - pos: 5
+    type: monitor
+    monitor: build_status
+    icon: build.png
+    label: Build
+
+  - pos: 6
+    type: monitor
+    monitor: cpu_load
+    icon: cpu.png
+    label: CPU
+
+  - pos: 7
+    type: monitor
+    monitor: disk_free
+    icon: disk.png
+    label: Disk
+
+  # ── Row 2: Solo Pipeline Actions (positions 8-15) ─────────────
+  - pos: 8
+    type: action
+    action: tmux_send
+    command: /research
+    icon: research.png
+    label: Research
+
+  - pos: 9
+    type: action
+    action: tmux_send
+    command: /validate
+    icon: validate.png
+    label: Validate
+
+  - pos: 10
+    type: action
+    action: tmux_send
+    command: /scaffold
+    icon: scaffold.png
+    label: Scaffold
+
+  - pos: 11
+    type: action
+    action: tmux_send
+    command: /plan
+    icon: plan.png
+    label: Plan
+
+  - pos: 12
+    type: action
+    action: tmux_send
+    command: /build
+    icon: build-action.png
+    label: Build
+
+  - pos: 13
+    type: action
+    action: tmux_send
+    command: /deploy
+    icon: deploy.png
+    label: Deploy
+
+  - pos: 14
+    type: action
+    action: tmux_send
+    command: /review
+    icon: review.png
+    label: Review
+
+  - pos: 15
+    type: action
+    action: tmux_send
+    command: /pipeline
+    icon: pipeline-action.png
+    label: Pipeline
+
+  # ── Row 3: Tmux + Git Actions (positions 16-23) ───────────────
+  - pos: 16
+    type: action
+    action: tmux_select
+    pane: "0"
+    icon: pane.png
+    label: Pane 1
+
+  - pos: 17
+    type: action
+    action: tmux_select
+    pane: "1"
+    icon: pane.png
+    label: Pane 2
+
+  - pos: 18
+    type: action
+    action: tmux_select
+    pane: "2"
+    icon: pane.png
+    label: Pane 3
+
+  - pos: 19
+    type: action
+    action: tmux_select
+    pane: "3"
+    icon: pane.png
+    label: Pane 4
+
+  - pos: 20
+    type: action
+    action: claude_p
+    prompt: "commit staged changes with a descriptive message"
+    allowed_tools: "Bash(git *)"
+    icon: commit.png
+    label: Commit
+
+  - pos: 21
+    type: action
+    action: shell
+    command: "git push"
+    icon: push.png
+    label: Push
+
+  - pos: 22
+    type: action
+    action: shell
+    command: "git pull --rebase"
+    icon: pull.png
+    label: Pull
+
+  - pos: 23
+    type: action
+    action: tmux_send
+    command: /ralph-loop
+    icon: ralph.png
+    label: Ralph
+
+  # ── Row 4: Utilities (positions 24-31) ─────────────────────────
+  - pos: 24
+    type: action
+    action: claude_p
+    prompt: "web search for the topic in my clipboard and summarize findings"
+    icon: search.png
+    label: Search
+
+  - pos: 25
+    type: action
+    action: tmux_send
+    command: /swarm
+    icon: swarm.png
+    label: Swarm
+
+  - pos: 26
+    type: action
+    action: claude_p
+    prompt: "lookup documentation using Context7 for the library in my clipboard"
+    icon: ctx7.png
+    label: Ctx7
+
+  - pos: 27
+    type: action
+    action: tmux_send
+    command: /seo-audit
+    icon: seo.png
+    label: SEO
+
+  - pos: 28
+    type: action
+    action: tmux_send
+    command: /content-gen
+    icon: content.png
+    label: Content
+
+  - pos: 29
+    type: action
+    action: claude_p
+    prompt: "search the knowledge base for relevant documents about my current work"
+    icon: kb.png
+    label: KB
+
+  - pos: 30
+    type: action
+    action: brightness
+    icon: brightness.png
+    label: Bright
+
+  - pos: 31
+    type: action
+    action: exit
+    icon: exit.png
+    label: Exit
