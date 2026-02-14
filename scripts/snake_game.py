@@ -1,7 +1,7 @@
 """Snake — Stream Deck mini-game.
 
-Classic snake on a 3x8 grid. Use arrow buttons on Row 1 to steer.
-Eat food to grow, avoid walls and yourself!
+Classic snake on a 3x8 grid. Tap any cell on the game field
+to steer — snake turns toward the tapped cell.
 
 Usage:
     uv run python scripts/snake_game.py
@@ -21,6 +21,9 @@ from PIL import Image, ImageDraw, ImageFont
 from StreamDeck.DeviceManager import DeviceManager
 from StreamDeck.ImageHelpers import PILHelper
 
+import sound_engine
+import scores
+
 # -- config ---------------------------------------------------------------
 GAME_KEYS = list(range(8, 32))  # rows 2-4 = game area
 HUD_KEYS = list(range(0, 8))   # row 1 = HUD
@@ -29,12 +32,6 @@ COLS = 8
 SIZE = (96, 96)
 FONT_PATH = "/System/Library/Fonts/Helvetica.ttc"
 SFX_VOLUME = 0.3
-
-# Arrow control buttons (Row 1, right side)
-KEY_LEFT = 4
-KEY_UP = 5
-KEY_DOWN = 6
-KEY_RIGHT = 7
 
 # Direction vectors: (d_row, d_col)
 DIR_LEFT = (0, -1)
@@ -92,14 +89,7 @@ def play_orc(event: str):
         full = os.path.join(PEON_DIR, rel)
         if os.path.exists(full):
             _last_orc_time = now
-            try:
-                subprocess.Popen(
-                    ["afplay", full],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-            except Exception:
-                pass
+            sound_engine.play_voice(full)
             return
 
 
@@ -201,14 +191,7 @@ def play_sfx(name: str):
     """Play sound non-blocking via afplay."""
     wav = _sfx_cache.get(name)
     if wav and os.path.exists(wav):
-        try:
-            subprocess.Popen(
-                ["afplay", wav],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-        except Exception:
-            pass
+        sound_engine.play_sfx_file(wav)
 
 
 def cleanup_sfx():
@@ -276,22 +259,6 @@ def render_food(size=SIZE) -> Image.Image:
 def render_empty(size=SIZE) -> Image.Image:
     """Empty cell."""
     return Image.new("RGB", size, "#0f172a")
-
-
-def render_arrow(char: str, size=SIZE) -> Image.Image:
-    """Arrow button for controls."""
-    img = Image.new("RGB", size, "#1e293b")
-    d = ImageDraw.Draw(img)
-    d.text((48, 48), char, font=_font(40), fill="white", anchor="mm")
-    return img
-
-
-def render_arrow_active(char: str, size=SIZE) -> Image.Image:
-    """Arrow button highlighted (current direction)."""
-    img = Image.new("RGB", size, "#334155")
-    d = ImageDraw.Draw(img)
-    d.text((48, 48), char, font=_font(40), fill="#22c55e", anchor="mm")
-    return img
 
 
 def render_hud_title(size=SIZE) -> Image.Image:
@@ -365,7 +332,7 @@ class SnakeGame:
     def __init__(self, deck):
         self.deck = deck
         self.score = 0
-        self.best = 0
+        self.best = scores.load_best("snake")
         self.running = False
         self.game_over = False
         self.lock = threading.Lock()
@@ -384,19 +351,6 @@ class SnakeGame:
         self.img_hud_title = render_hud_title()
         self.img_hud_empty = render_hud_empty()
         self.img_game_over = render_game_over()
-        # Arrow chars
-        self.arrows = {
-            KEY_LEFT: "\u25C0",   # left-pointing triangle
-            KEY_UP: "\u25B2",     # up-pointing triangle
-            KEY_DOWN: "\u25BC",   # down-pointing triangle
-            KEY_RIGHT: "\u25B6",  # right-pointing triangle
-        }
-        self.arrow_to_dir = {
-            KEY_LEFT: DIR_LEFT,
-            KEY_UP: DIR_UP,
-            KEY_DOWN: DIR_DOWN,
-            KEY_RIGHT: DIR_RIGHT,
-        }
 
     def set_key(self, pos: int, img: Image.Image):
         native = PILHelper.to_native_key_format(self.deck, img)
@@ -415,9 +369,8 @@ class SnakeGame:
         self.set_key(1, render_hud_score(0))
         self.set_key(2, render_hud_best(self.best))
         self.set_key(3, self.img_hud_empty)
-        # Arrow buttons dim
-        for k in (KEY_LEFT, KEY_UP, KEY_DOWN, KEY_RIGHT):
-            self.set_key(k, render_arrow(self.arrows[k]))
+        for k in range(4, 8):
+            self.set_key(k, self.img_hud_empty)
         # Game area
         for k in GAME_KEYS:
             if k == START_KEY:
@@ -539,8 +492,6 @@ class SnakeGame:
         if self.food is not None:
             self.set_key(rc_to_pos(self.food[0], self.food[1]), self.img_food)
 
-        # Update arrow highlights
-        self._update_arrows()
 
     # -- food --------------------------------------------------------------
 
@@ -566,6 +517,7 @@ class SnakeGame:
         new_best = self.score > self.best
         if new_best:
             self.best = self.score
+            scores.save_best("snake", self.best)
 
         if new_best and self.score > 0:
             play_sfx("newbest")
@@ -583,8 +535,8 @@ class SnakeGame:
         self.set_key(1, render_hud_score(self.score))
         self.set_key(2, render_hud_best(self.best))
         self.set_key(3, self.img_hud_empty)
-        for k in (KEY_LEFT, KEY_UP, KEY_DOWN, KEY_RIGHT):
-            self.set_key(k, render_arrow(self.arrows[k]))
+        for k in range(4, 8):
+            self.set_key(k, self.img_hud_empty)
 
         # Flash snake red briefly, then show game over
         for r, c in self.snake:
@@ -632,7 +584,6 @@ class SnakeGame:
                     self.set_key(pos, self.img_food)
                 else:
                     self.set_key(pos, self.img_empty)
-        self._update_arrows()
 
     def _update_hud(self):
         """Update HUD displays."""
@@ -640,16 +591,6 @@ class SnakeGame:
         self.set_key(1, render_hud_score(self.score))
         self.set_key(2, render_hud_best(self.best))
         self.set_key(3, render_hud_speed(self.tick_speed))
-        self._update_arrows()
-
-    def _update_arrows(self):
-        """Highlight the active direction arrow."""
-        for key, d in self.arrow_to_dir.items():
-            char = self.arrows[key]
-            if d == self.direction and self.running:
-                self.set_key(key, render_arrow_active(char))
-            else:
-                self.set_key(key, render_arrow(char))
 
     # -- input -------------------------------------------------------------
 
@@ -665,14 +606,43 @@ class SnakeGame:
         if not self.running:
             return
 
-        # Direction change
-        new_dir = self.arrow_to_dir.get(key)
-        if new_dir:
+        # Tap-to-steer: tap any game cell to change direction
+        if 8 <= key <= 31:
+            tap_r, tap_c = pos_to_rc(key)
             with self.lock:
+                head_r, head_c = self.snake[0]
+                dr = tap_r - head_r
+                dc = tap_c - head_c
+
+                if dr == 0 and dc == 0:
+                    return  # tapped on head
+
+                cur_dr, cur_dc = self.direction
+
+                if cur_dr != 0:
+                    # Moving vertically — prefer horizontal turn
+                    if dc > 0:
+                        new_dir = DIR_RIGHT
+                    elif dc < 0:
+                        new_dir = DIR_LEFT
+                    elif dr > 0:
+                        new_dir = DIR_DOWN
+                    else:
+                        new_dir = DIR_UP
+                else:
+                    # Moving horizontally — prefer vertical turn
+                    if dr > 0:
+                        new_dir = DIR_DOWN
+                    elif dr < 0:
+                        new_dir = DIR_UP
+                    elif dc > 0:
+                        new_dir = DIR_RIGHT
+                    else:
+                        new_dir = DIR_LEFT
+
                 # Prevent 180-degree reversal
-                dr, dc = self.direction
                 nr, nc = new_dir
-                if (dr + nr, dc + nc) != (0, 0):
+                if (cur_dr + nr, cur_dc + nc) != (0, 0):
                     self.next_direction = new_dir
 
 
@@ -702,7 +672,7 @@ def main():
     deck.set_brightness(80)
     print(f"Connected: {deck.deck_type()} ({deck.key_count()} keys)")
     print("SNAKE! Press the center button to start.")
-    print("Controls: Button 4=LEFT, 5=UP, 6=DOWN, 7=RIGHT")
+    print("Controls: Tap any cell on the grid to steer.")
 
     game = SnakeGame(deck)
     game.show_idle()

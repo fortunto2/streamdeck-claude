@@ -21,6 +21,9 @@ from PIL import Image, ImageDraw, ImageFont
 from StreamDeck.DeviceManager import DeviceManager
 from StreamDeck.ImageHelpers import PILHelper
 
+import sound_engine
+import scores
+
 # ── config ───────────────────────────────────────────────────────────
 GAME_KEYS = list(range(8, 32))  # rows 2-4 = game area (24 buttons)
 HUD_KEYS = list(range(0, 8))    # row 1 = HUD
@@ -29,6 +32,7 @@ SIZE = (96, 96)
 
 FONT_PATH = "/System/Library/Fonts/Helvetica.ttc"
 SFX_VOLUME = 0.3
+MAX_MOVES = 25
 
 # 12 distinct bright colors for pairs
 PAIR_COLORS = [
@@ -64,6 +68,10 @@ ORC_VOICES = {
         "sc_battlecruiser/sounds/HailingFrequenciesOpen.mp3",
         "sc_battlecruiser/sounds/ReceivingTransmission.mp3",
     ],
+    "lose": [
+        "sc_battlecruiser/sounds/AllCrewsReporting.mp3",
+        "sc_battlecruiser/sounds/GoodDayCommander.mp3",
+    ],
 }
 
 _last_orc_time: float = 0
@@ -84,14 +92,7 @@ def play_orc(event: str):
         full = os.path.join(PEON_DIR, rel)
         if os.path.exists(full):
             _last_orc_time = now
-            try:
-                subprocess.Popen(
-                    ["afplay", full],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-            except Exception:
-                pass
+            sound_engine.play_voice(full)
             return
 
 
@@ -179,19 +180,20 @@ def _generate_sfx():
     _write_wav(os.path.join(_sfx_dir, "win.wav"), s)
     _sfx_cache["win"] = os.path.join(_sfx_dir, "win.wav")
 
+    # LOSE — sad descending (A4->F4->D4->A3)
+    s = (_square(440, 0.1, v * 0.5, 0.5) +
+         _square(349, 0.1, v * 0.45, 0.5) +
+         _square(294, 0.12, v * 0.4, 0.5) +
+         _square(220, 0.25, v * 0.35, 0.5))
+    _write_wav(os.path.join(_sfx_dir, "lose.wav"), s)
+    _sfx_cache["lose"] = os.path.join(_sfx_dir, "lose.wav")
+
 
 def play_sfx(name: str):
     """Play sound non-blocking via afplay."""
     wav = _sfx_cache.get(name)
     if wav and os.path.exists(wav):
-        try:
-            subprocess.Popen(
-                ["afplay", wav],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-        except Exception:
-            pass
+        sound_engine.play_sfx_file(wav)
 
 
 def cleanup_sfx():
@@ -239,11 +241,13 @@ def render_hud_title(size=SIZE) -> Image.Image:
     return img
 
 
-def render_hud_moves(moves: int, size=SIZE) -> Image.Image:
+def render_hud_moves(moves: int, max_moves: int = MAX_MOVES, size=SIZE) -> Image.Image:
     img = Image.new("RGB", size, "#111827")
     d = ImageDraw.Draw(img)
     d.text((48, 20), "MOVES", font=_font(14), fill="#9ca3af", anchor="mt")
-    d.text((48, 52), str(moves), font=_font(32), fill="#60a5fa", anchor="mt")
+    remaining = max_moves - moves
+    clr = "#ef4444" if remaining <= 5 else "#fbbf24" if remaining <= 10 else "#60a5fa"
+    d.text((48, 48), f"{moves}/{max_moves}", font=_font(22), fill=clr, anchor="mt")
     return img
 
 
@@ -292,6 +296,15 @@ def render_game_over(size=SIZE) -> Image.Image:
     return img
 
 
+def render_lose(size=SIZE) -> Image.Image:
+    """Lose screen — out of moves."""
+    img = Image.new("RGB", size, "#7c2d12")
+    d = ImageDraw.Draw(img)
+    d.text((48, 38), "OUT OF", font=_font(14), fill="white", anchor="mm")
+    d.text((48, 58), "MOVES!", font=_font(16), fill="#fca5a5", anchor="mm")
+    return img
+
+
 def render_new_best(size=SIZE) -> Image.Image:
     img = Image.new("RGB", size, "#111827")
     d = ImageDraw.Draw(img)
@@ -307,7 +320,7 @@ class MemoryGame:
         self.deck = deck
         self.moves = 0
         self.pairs_found = 0
-        self.best = 0  # fewest moves to win (0 = no record yet)
+        self.best = scores.load_best("memory")
         self.running = False
         self.lock = threading.Lock()
         self.accepting_input = True
@@ -417,6 +430,7 @@ class MemoryGame:
 
             if is_new_best:
                 self.best = self.moves
+                scores.save_best("memory", self.best)
                 play_sfx("win")
                 play_orc("newbest")
             else:
@@ -424,6 +438,33 @@ class MemoryGame:
                 play_orc("win")
 
             self._show_win(is_new_best)
+
+    def _lose(self):
+        """Handle loss — out of moves."""
+        self.running = False
+        play_sfx("lose")
+        play_orc("lose")
+
+        # Show all hidden cards briefly, then lose screen
+        for i in range(24):
+            if not self.matched[i]:
+                key = self._key_from_index(i)
+                color = self._color_hex(i)
+                self.set_key(key, render_face_up(color))
+
+        self._update_hud()
+
+        def _show_lose_screen():
+            time.sleep(1.2)
+            for k in GAME_KEYS:
+                if k == 20:
+                    self.set_key(k, self.img_start)
+                elif k in (18, 19, 21):
+                    self.set_key(k, render_lose())
+                else:
+                    self.set_key(k, render_hud_empty())
+
+        threading.Thread(target=_show_lose_screen, daemon=True).start()
 
     def _show_win(self, is_new_best: bool):
         """Show win screen."""
@@ -503,6 +544,12 @@ class MemoryGame:
                 idx_a, idx_b = self.flipped
                 self.moves += 1
                 self._update_hud()
+
+                # Check move limit
+                if self.moves >= MAX_MOVES and self.board[idx_a] != self.board[idx_b]:
+                    self.flipped = []
+                    self._lose()
+                    return
 
                 if self.board[idx_a] == self.board[idx_b]:
                     # Match found!

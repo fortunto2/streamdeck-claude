@@ -22,6 +22,9 @@ from PIL import Image, ImageDraw, ImageFont
 from StreamDeck.DeviceManager import DeviceManager
 from StreamDeck.ImageHelpers import PILHelper
 
+import sound_engine
+import scores
+
 # ── config ───────────────────────────────────────────────────────────
 GAME_KEYS = list(range(8, 32))  # rows 2-4 = game area
 SCORE_KEYS = list(range(0, 8))  # row 1 = HUD
@@ -89,14 +92,7 @@ def play_orc(event: str):
         full = os.path.join(PEON_DIR, rel)
         if os.path.exists(full):
             _last_orc_time = now
-            try:
-                subprocess.Popen(
-                    ["afplay", full],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-            except Exception:
-                pass
+            sound_engine.play_voice(full)
             return
 
 
@@ -236,14 +232,7 @@ def play_sfx(name: str):
     """Play sound non-blocking via afplay."""
     wav = _sfx_cache.get(name)
     if wav and os.path.exists(wav):
-        try:
-            subprocess.Popen(
-                ["afplay", wav],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-        except Exception:
-            pass
+        sound_engine.play_sfx_file(wav)
 
 
 def cleanup_sfx():
@@ -418,7 +407,7 @@ class BeaverGame:
     def __init__(self, deck):
         self.deck = deck
         self.score = 0
-        self.best = 0
+        self.best = scores.load_best("beaver")
         self.level = 1
         self.beaver_timeout = BEAVER_TIMEOUT_START
         self.catches_this_level = 0
@@ -500,6 +489,7 @@ class BeaverGame:
             self.game_over = True
             if self.score > self.best:
                 self.best = self.score
+                scores.save_best("beaver", self.best)
 
         self._cancel_beaver_timer()
         # Clear beaver

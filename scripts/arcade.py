@@ -17,6 +17,8 @@ from PIL import Image, ImageDraw, ImageFont
 from StreamDeck.DeviceManager import DeviceManager
 from StreamDeck.ImageHelpers import PILHelper
 
+import sound_engine
+
 SIZE = (96, 96)
 FONT_PATH = "/System/Library/Fonts/Helvetica.ttc"
 
@@ -59,42 +61,108 @@ def render_back(size=SIZE) -> Image.Image:
     return img
 
 
+VOICE_TOGGLE_KEY = 15  # end of row 2
+
+
+def render_voice_btn(enabled: bool, size=SIZE) -> Image.Image:
+    bg = "#065f46" if enabled else "#7f1d1d"
+    img = Image.new("RGB", size, bg)
+    d = ImageDraw.Draw(img)
+    label = "VOICE" if enabled else "VOICE"
+    state = "ON" if enabled else "OFF"
+    color = "#34d399" if enabled else "#f87171"
+    d.text((48, 30), label, font=_font(14), fill="white", anchor="mt")
+    d.text((48, 54), state, font=_font(16), fill=color, anchor="mt")
+    return img
+
+
 # ── game registry ────────────────────────────────────────────────────
 
 GAMES = [
+    # Row 1: logo(0) + action games (buttons 1-7)
     {
         "title": "BEAVER",
         "subtitle": "HUNT",
         "bg": "#2d1b0e",
         "script": "beaver_game",
-        "pos": 8,  # first button of row 2
+        "pos": 1,
     },
     {
         "title": "SIMON",
         "subtitle": "SAYS",
         "bg": "#4c1d95",
         "script": "simon_game",
-        "pos": 9,
+        "pos": 2,
     },
     {
         "title": "REACT",
         "subtitle": "SPEED",
         "bg": "#065f46",
         "script": "reaction_game",
-        "pos": 10,
+        "pos": 3,
     },
     {
         "title": "SNAKE",
         "subtitle": "GAME",
         "bg": "#14532d",
         "script": "snake_game",
-        "pos": 11,
+        "pos": 4,
     },
     {
         "title": "MEMORY",
         "subtitle": "MATCH",
         "bg": "#1e3a5f",
         "script": "memory_game",
+        "pos": 5,
+    },
+    {
+        "title": "BREAK",
+        "subtitle": "OUT",
+        "bg": "#92400e",
+        "script": "breakout_game",
+        "pos": 6,
+    },
+    {
+        "title": "CHIMP",
+        "subtitle": "TEST",
+        "bg": "#991b1b",
+        "script": "sequence_game",
+        "pos": 7,
+    },
+    # Row 2: logic & IQ games (buttons 8-15)
+    {
+        "title": "N-BACK",
+        "subtitle": "IQ",
+        "bg": "#1e3a5f",
+        "script": "nback_game",
+        "pos": 8,
+    },
+    {
+        "title": "PATTERN",
+        "subtitle": "LOGIC",
+        "bg": "#7c3aed",
+        "script": "pattern_game",
+        "pos": 9,
+    },
+    {
+        "title": "MATH",
+        "subtitle": "SEQ",
+        "bg": "#0c4a6e",
+        "script": "mathseq_game",
+        "pos": 10,
+    },
+    {
+        "title": "QUICK",
+        "subtitle": "MATH",
+        "bg": "#166534",
+        "script": "quickmath_game",
+        "pos": 11,
+    },
+    {
+        "title": "NUM",
+        "subtitle": "GRID",
+        "bg": "#4c1d95",
+        "script": "numgrid_game",
         "pos": 12,
     },
 ]
@@ -124,17 +192,16 @@ class Arcade:
         # Logo in top-left
         self.set_key(0, render_logo())
 
-        # Empty HUD slots
-        for k in range(1, 8):
-            self.set_key(k, render_empty())
-
         # Game buttons
         for game in GAMES:
             self.set_key(game["pos"], render_game_btn(game["title"], game["subtitle"], game["bg"]))
 
+        # Voice toggle button
+        self.set_key(VOICE_TOGGLE_KEY, render_voice_btn(sound_engine.voices_enabled))
+
         # Fill rest with empty
-        used = {0} | {g["pos"] for g in GAMES}
-        for k in range(8, 32):
+        used = {0, VOICE_TOGGLE_KEY} | {g["pos"] for g in GAMES}
+        for k in range(1, 32):
             if k not in used:
                 self.set_key(k, render_empty())
 
@@ -164,6 +231,15 @@ class Arcade:
             "reaction_game": "ReactionGame",
             "snake_game": "SnakeGame",
             "memory_game": "MemoryGame",
+            "invaders_game": "InvadersGame",
+            "breakout_game": "BreakoutGame",
+            "pacman_game": "PacmanGame",
+            "sequence_game": "SequenceGame",
+            "nback_game": "NBackGame",
+            "pattern_game": "PatternGame",
+            "mathseq_game": "MathSeqGame",
+            "quickmath_game": "QuickMathGame",
+            "numgrid_game": "NumGridGame",
         }
         cls_name = class_map.get(script)
         if not cls_name or not hasattr(mod, cls_name):
@@ -195,10 +271,16 @@ class Arcade:
 
     def _stop_game(self):
         """Clean up active game."""
+        sound_engine.stop_all()  # kill any playing audio
         if self.active_game:
-            # Stop timers if beaver game
             if hasattr(self.active_game, "_cancel_beaver_timer"):
                 self.active_game._cancel_beaver_timer()
+            if hasattr(self.active_game, "_cancel_tick"):
+                self.active_game._cancel_tick()
+            if hasattr(self.active_game, "_cancel_all_timers"):
+                self.active_game._cancel_all_timers()
+            if hasattr(self.active_game, "_cancel_timer"):
+                self.active_game._cancel_timer()
             if hasattr(self.active_game, "running"):
                 self.active_game.running = False
             self.active_game = None
@@ -207,6 +289,12 @@ class Arcade:
     def on_key(self, _deck, key: int, pressed: bool):
         """Menu key handler."""
         if not pressed or not self.in_menu:
+            return
+
+        # Voice toggle
+        if key == VOICE_TOGGLE_KEY:
+            sound_engine.voices_enabled = not sound_engine.voices_enabled
+            self.set_key(VOICE_TOGGLE_KEY, render_voice_btn(sound_engine.voices_enabled))
             return
 
         for game in GAMES:
@@ -244,6 +332,7 @@ def main():
     except KeyboardInterrupt:
         print("\nBye!")
     finally:
+        sound_engine.stop_all()
         deck.reset()
         deck.close()
 

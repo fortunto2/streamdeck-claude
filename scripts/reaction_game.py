@@ -21,6 +21,9 @@ from PIL import Image, ImageDraw, ImageFont
 from StreamDeck.DeviceManager import DeviceManager
 from StreamDeck.ImageHelpers import PILHelper
 
+import sound_engine
+import scores
+
 # -- config ----------------------------------------------------------------
 GAME_KEYS = list(range(8, 32))  # rows 2-4 = game area
 HUD_KEYS = list(range(0, 8))    # row 1 = HUD
@@ -85,14 +88,7 @@ def play_orc(event: str):
         full = os.path.join(PEON_DIR, rel)
         if os.path.exists(full):
             _last_orc_time = now
-            try:
-                subprocess.Popen(
-                    ["afplay", full],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-            except Exception:
-                pass
+            sound_engine.play_voice(full)
             return
 
 
@@ -189,14 +185,7 @@ def play_sfx(name: str):
     """Play sound non-blocking via afplay."""
     wav = _sfx_cache.get(name)
     if wav and os.path.exists(wav):
-        try:
-            subprocess.Popen(
-                ["afplay", wav],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-        except Exception:
-            pass
+        sound_engine.play_sfx_file(wav)
 
 
 def cleanup_sfx():
@@ -377,7 +366,7 @@ class ReactionGame:
         self.deck = deck
         self.round = 0
         self.times: list[int] = []       # reaction times per round (ms)
-        self.best_ever: int = 99999      # personal best across games
+        self.best_ever: int = scores.load_best("reaction", 99999)      # personal best across games
         self.state = "idle"              # idle | waiting | ready | reacting | feedback | gameover
         self.lock = threading.Lock()
         self.target_key = -1             # which key is lit green
@@ -551,6 +540,7 @@ class ReactionGame:
         is_new_best = best_this_game < self.best_ever and best_this_game < PENALTY_MS
         if is_new_best:
             self.best_ever = best_this_game
+            scores.save_best("reaction", self.best_ever)
 
         play_sfx("complete")
         if is_new_best:

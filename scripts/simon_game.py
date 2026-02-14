@@ -22,6 +22,9 @@ from PIL import Image, ImageDraw, ImageFont
 from StreamDeck.DeviceManager import DeviceManager
 from StreamDeck.ImageHelpers import PILHelper
 
+import sound_engine
+import scores
+
 # ── config ───────────────────────────────────────────────────────────
 SIZE = (96, 96)
 FONT_PATH = "/System/Library/Fonts/Helvetica.ttc"
@@ -91,10 +94,7 @@ def play_orc(event: str):
         full = os.path.join(PEON_DIR, rel)
         if os.path.exists(full):
             _last_orc_time = now
-            try:
-                subprocess.Popen(["afplay", full], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            except Exception:
-                pass
+            sound_engine.play_voice(full)
             return
 
 
@@ -173,10 +173,7 @@ def _generate_sfx():
 def play_sfx(name: str):
     wav = _sfx_cache.get(name)
     if wav and os.path.exists(wav):
-        try:
-            subprocess.Popen(["afplay", wav], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except Exception:
-            pass
+        sound_engine.play_sfx_file(wav)
 
 
 def cleanup_sfx():
@@ -260,7 +257,7 @@ class SimonGame:
         self.sequence: list[str] = []
         self.player_pos = 0
         self.round = 0
-        self.best = 0
+        self.best = scores.load_best("simon")
         self.state = "idle"  # idle | showing | playing | gameover
         self.lock = threading.Lock()
         self.accepting_input = False
@@ -386,6 +383,7 @@ class SimonGame:
             new_best = self.round - 1 > self.best
             if self.round - 1 > self.best:
                 self.best = self.round - 1
+                scores.save_best("simon", self.best)
 
             if new_best and self.best > 0:
                 play_orc("newbest")
