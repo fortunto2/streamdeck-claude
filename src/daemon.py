@@ -101,6 +101,10 @@ class StreamDeckClaude:
         for btn in self.config.buttons:
             if btn.type != "monitor":
                 continue
+            # Pipeline button gets special rich rendering
+            if btn.monitor == "pipeline_state":
+                self._render_pipeline(btn, new_state.get("pipeline_detail"))
+                continue
             status = self._get_monitor_status(btn, new_state)
             if status:
                 self._render_button(btn, status)
@@ -141,6 +145,62 @@ class StreamDeckClaude:
                 return "warning"
             return "clean"
         return "unknown"
+
+    def _render_pipeline(self, btn: ButtonConfig, detail: dict | None):
+        """Render pipeline button with rich progress info."""
+        if not detail:
+            self._render_button(btn, "idle")
+            return
+
+        project = detail["project"]
+        current = detail["current_stage"]
+        done = detail["done_count"]
+        total = detail["total"]
+        iteration = detail["iteration"]
+
+        # Color based on state
+        if current == "done":
+            bg = "#22c55e"  # green — all stages done
+        else:
+            bg = "#3b82f6"  # blue — running
+
+        # Build progress bar: ████░░ 4/6
+        filled = int(done / total * 6) if total > 0 else 0
+        bar = "\u2588" * filled + "\u2591" * (6 - filled)
+
+        # Truncate project name
+        if len(project) > 10:
+            project = project[:9] + "\u2026"
+
+        icon_path = None
+        if btn.icon:
+            p = Path(__file__).parent.parent / "assets" / btn.icon
+            if p.exists():
+                icon_path = str(p)
+
+        # Render custom image with progress
+        from src.renderer import render_button as _rb
+        from PIL import ImageDraw, ImageFont
+        img = _rb(size=(96, 96), label=None, bg_color=bg, icon_path=icon_path)
+        draw = ImageDraw.Draw(img)
+
+        try:
+            font_sm = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 11)
+            font_xs = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 9)
+        except OSError:
+            font_sm = ImageFont.load_default()
+            font_xs = font_sm
+
+        # Line 1: project name
+        draw.text((48, 58), project, font=font_sm, fill="white", anchor="mt")
+        # Line 2: current stage
+        draw.text((48, 72), current, font=font_sm, fill="#dddddd", anchor="mt")
+        # Line 3: progress bar + iter
+        draw.text((48, 86), f"{bar} {done}/{total} i{iteration}", font=font_xs, fill="#aaaaaa", anchor="mt")
+
+        native = PILHelper.to_native_key_format(self.deck, img)
+        with self.deck:
+            self.deck.set_key_image(btn.pos, native)
 
     def _render_tmux_sessions(self, sessions: list[dict]):
         """Render dynamic tmux session buttons on row 3."""

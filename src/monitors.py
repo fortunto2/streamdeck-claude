@@ -67,6 +67,61 @@ def check_pipeline_state(pipelines_dir: str = os.path.expanduser("~/.solo/pipeli
     return "idle"
 
 
+def check_pipeline_detail(pipelines_dir: str = os.path.expanduser("~/.solo/pipelines")) -> dict | None:
+    """Parse full pipeline state from YAML frontmatter.
+
+    Returns dict with project, iteration, stages list, or None if no pipeline.
+    """
+    import yaml as _yaml
+
+    pattern = os.path.join(pipelines_dir, "solo-pipeline-*.local.md")
+    files = glob.glob(pattern)
+    if not files:
+        return None
+    try:
+        with open(files[0]) as f:
+            content = f.read()
+        # Parse YAML frontmatter between --- markers
+        parts = content.split("---", 2)
+        if len(parts) < 3:
+            return None
+        fm = _yaml.safe_load(parts[1])
+        if not fm or not fm.get("active"):
+            return None
+
+        stages = fm.get("stages", [])
+        # Re-check done status from filesystem
+        for s in stages:
+            check = s.get("check", "")
+            if check:
+                if "*" in check:
+                    s["done"] = len(glob.glob(os.path.expanduser(check))) > 0
+                else:
+                    s["done"] = os.path.exists(os.path.expanduser(check))
+
+        done_count = sum(1 for s in stages if s.get("done"))
+        total = len(stages)
+        # Find current running stage (first not-done)
+        current = None
+        for s in stages:
+            if not s.get("done"):
+                current = s["id"]
+                break
+
+        return {
+            "project": fm.get("project", "?"),
+            "iteration": fm.get("iteration", 1),
+            "max_iterations": fm.get("max_iterations", 1),
+            "stages": stages,
+            "done_count": done_count,
+            "total": total,
+            "current_stage": current or ("done" if done_count == total else "idle"),
+            "started_at": fm.get("started_at", ""),
+        }
+    except Exception:
+        return None
+
+
 def check_system() -> dict:
     """Return CPU usage and free disk percentage."""
     return {
@@ -167,6 +222,7 @@ class MonitorThread(threading.Thread):
                 "git": check_git_status(self.project_dir),
                 "claude_count": check_claude_sessions(),
                 "pipeline": check_pipeline_state(),
+                "pipeline_detail": check_pipeline_detail(),
                 **check_system(),
                 "tmux_panes": check_tmux_panes(),
                 "tmux_sessions": check_tmux_sessions(),
