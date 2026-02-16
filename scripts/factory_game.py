@@ -35,6 +35,7 @@ SIZE = (96, 96)
 FONT_PATH = "/System/Library/Fonts/Helvetica.ttc"
 SFX_VOLUME = 0.3
 TICK_INTERVAL = 2.0
+SPEED_LEVELS = [1, 2, 4]  # 1x, 2x, 4x cycle
 
 # Directions: (dr, dc) indexed by direction id
 DIR_RIGHT = 0
@@ -311,7 +312,7 @@ LEVELS = [
         "belt_budget": 10,
         "furnace_budget": 0,
         "tiles": [
-            (0, 3, TILE_SOURCE, DIR_DOWN, RES_ORE),
+            (0, 3, TILE_SOURCE, DIR_RIGHT, RES_ORE),
             (2, 3, TILE_GOAL, DIR_RIGHT, None),
             (1, 3, TILE_WALL, 0, None),
             (1, 4, TILE_WALL, 0, None),
@@ -565,11 +566,13 @@ def render_hud_budget(belts_left, furnaces_left, size=SIZE):
     return img
 
 
-def render_hud_tick(tick_count, size=SIZE):
+def render_hud_tick(tick_count, speed=1, size=SIZE):
     img = Image.new("RGB", size, "#111827")
     d = ImageDraw.Draw(img)
-    d.text((48, 18), "TICK", font=_font(10), fill="#9ca3af", anchor="mm")
-    d.text((48, 50), str(tick_count), font=_font(22), fill="#4b5563", anchor="mm")
+    speed_color = "#4b5563" if speed == 1 else "#fbbf24" if speed == 2 else "#f87171"
+    d.text((48, 10), f"{speed}x", font=_font(14), fill=speed_color, anchor="mm")
+    d.text((48, 32), "TICK", font=_font(9), fill="#9ca3af", anchor="mm")
+    d.text((48, 56), str(tick_count), font=_font(20), fill="#4b5563", anchor="mm")
     return img
 
 
@@ -661,6 +664,7 @@ class FactoryGame:
         self.lost_count = 0
         self.tick_timer = None
         self.timers = []
+        self.speed_idx = 0  # index into SPEED_LEVELS
 
         # Grid state: (r, c) -> tile dict
         # tile dict: {"type": str, "dir": int, "res_type": str or None,
@@ -684,6 +688,22 @@ class FactoryGame:
         native = PILHelper.to_native_key_format(self.deck, img)
         with self.deck:
             self.deck.set_key_image(pos, native)
+
+    def _tick_interval(self):
+        return TICK_INTERVAL / SPEED_LEVELS[self.speed_idx]
+
+    def _speed(self):
+        return SPEED_LEVELS[self.speed_idx]
+
+    def _cycle_speed(self):
+        self.speed_idx = (self.speed_idx + 1) % len(SPEED_LEVELS)
+        # Reschedule tick with new interval if playing
+        if self.playing and self.tick_timer:
+            self.tick_timer.cancel()
+            self.tick_timer = threading.Timer(self._tick_interval(), self._tick)
+            self.tick_timer.daemon = True
+            self.tick_timer.start()
+        self._render_hud()
 
     def _cancel_all_timers(self):
         if self.tick_timer:
@@ -780,7 +800,7 @@ class FactoryGame:
         self.set_key(3, render_hud_lost(self.lost_count))
         self.set_key(4, render_hud_budget(
             self._belt_budget_left(), self._furnace_budget_left()))
-        self.set_key(5, render_hud_tick(self.tick_count))
+        self.set_key(5, render_hud_tick(self.tick_count, self._speed()))
         self.set_key(6, render_hud_play_pause(self.playing))
         self.set_key(7, render_hud_build(self.mode == "build"))
 
@@ -994,7 +1014,7 @@ class FactoryGame:
 
         # Schedule next tick
         if self.running and self.playing:
-            self.tick_timer = threading.Timer(TICK_INTERVAL, self._tick)
+            self.tick_timer = threading.Timer(self._tick_interval(), self._tick)
             self.tick_timer.daemon = True
             self.tick_timer.start()
 
@@ -1002,7 +1022,7 @@ class FactoryGame:
         """Start resource flow."""
         self.playing = True
         self._render_hud()
-        self.tick_timer = threading.Timer(TICK_INTERVAL, self._tick)
+        self.tick_timer = threading.Timer(self._tick_interval(), self._tick)
         self.tick_timer.daemon = True
         self.tick_timer.start()
 
@@ -1169,6 +1189,9 @@ class FactoryGame:
             self._start_game()
 
     def _on_paused(self, key):
+        if key == 5:
+            self._cycle_speed()
+            return
         if key == 6:
             # Play
             self.mode = "playing"
@@ -1185,6 +1208,9 @@ class FactoryGame:
                 self._rotate_tile(r, c)
 
     def _on_playing(self, key):
+        if key == 5:
+            self._cycle_speed()
+            return
         if key == 6:
             # Pause
             self.mode = "paused"
