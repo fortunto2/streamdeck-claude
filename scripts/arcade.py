@@ -165,6 +165,99 @@ GAMES = [
         "script": "numgrid_game",
         "pos": 12,
     },
+    {
+        "title": "BUNNY",
+        "subtitle": "BLITZ",
+        "bg": "#065f46",
+        "script": "bunny_game",
+        "pos": 13,
+    },
+    {
+        "title": "SPACE",
+        "subtitle": "INVADERS",
+        "bg": "#1e1b4b",
+        "script": "invaders_game",
+        "pos": 14,
+    },
+    # Row 3: more games (buttons 16-23)
+    {
+        "title": "LIGHTS",
+        "subtitle": "OUT",
+        "bg": "#854d0e",
+        "script": "lights_game",
+        "pos": 16,
+    },
+    {
+        "title": "DODGE",
+        "subtitle": "METEORS",
+        "bg": "#7f1d1d",
+        "script": "dodge_game",
+        "pos": 17,
+    },
+    {
+        "title": "MINE",
+        "subtitle": "SWEEP",
+        "bg": "#374151",
+        "script": "mines_game",
+        "pos": 18,
+    },
+    {
+        "title": "COLONY",
+        "subtitle": "BUILD",
+        "bg": "#ca8a04",
+        "script": "colony_game",
+        "pos": 19,
+    },
+    {
+        "title": "DUNGEON",
+        "subtitle": "CRAWL",
+        "bg": "#7c3aed",
+        "script": "dungeon_game",
+        "pos": 20,
+    },
+    {
+        "title": "FACTORY",
+        "subtitle": "CHAIN",
+        "bg": "#ea580c",
+        "script": "factory_game",
+        "pos": 21,
+    },
+    {
+        "title": "TOWER",
+        "subtitle": "DEFENSE",
+        "bg": "#15803d",
+        "script": "tower_game",
+        "pos": 22,
+    },
+    {
+        "title": "SPACE",
+        "subtitle": "TRADER",
+        "bg": "#1e3a5f",
+        "script": "trader_game",
+        "pos": 23,
+    },
+    # Row 4: economic & strategy games (buttons 24-31)
+    {
+        "title": "MINI",
+        "subtitle": "EMPIRE",
+        "bg": "#92400e",
+        "script": "empire_game",
+        "pos": 24,
+    },
+    {
+        "title": "CRYPTO",
+        "subtitle": "TYCOON",
+        "bg": "#166534",
+        "script": "crypto_game",
+        "pos": 25,
+    },
+    {
+        "title": "CRYPTO",
+        "subtitle": "REAL",
+        "bg": "#0ea5e9",
+        "script": "crypto_real_game",
+        "pos": 26,
+    },
 ]
 
 
@@ -240,6 +333,18 @@ class Arcade:
             "mathseq_game": "MathSeqGame",
             "quickmath_game": "QuickMathGame",
             "numgrid_game": "NumGridGame",
+            "bunny_game": "BunnyGame",
+            "lights_game": "LightsGame",
+            "dodge_game": "DodgeGame",
+            "mines_game": "MinesGame",
+            "colony_game": "ColonyGame",
+            "dungeon_game": "DungeonGame",
+            "factory_game": "FactoryGame",
+            "tower_game": "TowerGame",
+            "trader_game": "TraderGame",
+            "empire_game": "EmpireGame",
+            "crypto_game": "CryptoGame",
+            "crypto_real_game": "CryptoRealGame",
         }
         cls_name = class_map.get(script)
         if not cls_name or not hasattr(mod, cls_name):

@@ -4,3 +4,4 @@ __pycache__/
 .solo/
 dist/
 *.egg-info/
+.env
