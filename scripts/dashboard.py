@@ -82,6 +82,7 @@ GAMES = [
     {"title": "MINI",    "subtitle": "EMPIRE",   "bg": "#92400e",  "script": "empire_game",     "pos": 24},
     {"title": "CRYPTO",  "subtitle": "TYCOON",   "bg": "#166534",  "script": "crypto_game",     "pos": 25},
     {"title": "CRYPTO",  "subtitle": "REAL",     "bg": "#0ea5e9",  "script": "crypto_real_game","pos": 26},
+    {"title": "DJ",      "subtitle": "BEATS",    "bg": "#7c3aed",  "script": "sequencer_game", "pos": 27},
 ]
 
 CLASS_MAP = {
@@ -110,6 +111,7 @@ CLASS_MAP = {
     "empire_game": "EmpireGame",
     "crypto_game": "CryptoGame",
     "crypto_real_game": "CryptoRealGame",
+    "sequencer_game": "SequencerGame",
 }
 
 # Build lookup: script_name -> game info
@@ -144,7 +146,7 @@ def render_voice_btn(enabled: bool, size=SIZE) -> Image.Image:
     d = ImageDraw.Draw(img)
     state = "ON" if enabled else "OFF"
     color = "#34d399" if enabled else "#f87171"
-    d.text((48, 30), "VOICE", font=_font(14), fill="white", anchor="mt")
+    d.text((48, 30), "SOUND", font=_font(14), fill="white", anchor="mt")
     d.text((48, 54), state, font=_font(16), fill=color, anchor="mt")
     return img
 
@@ -568,7 +570,7 @@ class Dashboard:
         self.set_key(11, render_section_btn("AGENTS", "", "#7c3aed"))
         self.set_key(12, render_greyed("CALENDAR", "SOON"))
         self.set_key(13, render_section_btn("SIRI", "", "#1d4ed8"))
-        self.set_key(14, render_voice_btn(sound_engine.voices_enabled))
+        self.set_key(14, render_voice_btn(not sound_engine.global_mute))
         self.set_key(15, self._render_bright_btn())
 
     def _render_env_row(self):
@@ -702,8 +704,8 @@ class Dashboard:
             if pos < 32:
                 self.set_key(pos, render_game_btn(game["title"], game["subtitle"], game["bg"]))
 
-        # Voice toggle
-        self.set_key(15, render_voice_btn(sound_engine.voices_enabled))
+        # Sound mute toggle
+        self.set_key(15, render_voice_btn(not sound_engine.global_mute))
 
         # Fill empty slots
         used = {0, 15} | {g["pos"] for g in GAMES}
@@ -836,9 +838,11 @@ class Dashboard:
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return
         if key == 14:
-            # Voice toggle
-            sound_engine.voices_enabled = not sound_engine.voices_enabled
-            self.set_key(14, render_voice_btn(sound_engine.voices_enabled))
+            # Global sound mute toggle
+            sound_engine.global_mute = not sound_engine.global_mute
+            if sound_engine.global_mute:
+                sound_engine.stop_all()
+            self.set_key(14, render_voice_btn(not sound_engine.global_mute))
             return
         if key == 15:
             # Brightness cycle
@@ -861,8 +865,10 @@ class Dashboard:
             self.show_home()
             return
         if key == 15:
-            sound_engine.voices_enabled = not sound_engine.voices_enabled
-            self.set_key(15, render_voice_btn(sound_engine.voices_enabled))
+            sound_engine.global_mute = not sound_engine.global_mute
+            if sound_engine.global_mute:
+                sound_engine.stop_all()
+            self.set_key(15, render_voice_btn(not sound_engine.global_mute))
             return
         for game in GAMES:
             if key == game["pos"]:

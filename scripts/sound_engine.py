@@ -10,6 +10,7 @@ import threading
 # ── toggle flags (arcade.py can flip these) ──────────────────────────
 voices_enabled: bool = True
 sfx_enabled: bool = True
+global_mute: bool = False  # overrides all sound when True
 
 # ── process tracking ─────────────────────────────────────────────────
 _processes: list[subprocess.Popen] = []
@@ -31,6 +32,8 @@ def _reap():
 
 def _play(filepath: str) -> None:
     """Core: spawn afplay with tracking + zombie cleanup."""
+    if global_mute:
+        return
     _reap()
     with _lock:
         # kill oldest if too many concurrent
