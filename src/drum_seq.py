@@ -1,5 +1,12 @@
 """16-step drum sequencer state — drives the Drum Stream Deck page.
 
+Notes go out on the configured `channel` (default 9 = GM channel 10,
+the drum-channel convention). The receiving track in REAPER must
+accept channel 10 (or "All channels") or it'll silently swallow them.
+SuperDuper Drum maps voices to white keys C-A (MIDI 48, 50, 52, 53,
+55, 57) regardless of channel — what matters is that the MIDI Input
+on the track is set to a channel the sequencer actually uses.
+
 Layout on Stream Deck XL (32 buttons total):
 - 16 step buttons (4×4 grid of the lower-right quadrant by convention)
 - 6 voice select buttons (Kick / Snare / HHc / HHo / Clap / Cowbell —
@@ -109,6 +116,7 @@ class DrumSequencer:
 
     def _run(self) -> None:
         """16-step loop at `self.bpm` (16th notes)."""
+        print(f"drum: clock started bpm={self.bpm} channel={self.channel + 1}", flush=True)
         while not self._stop_event.is_set():
             # 16th note interval at BPM.
             step_sec = 60.0 / max(self.bpm, 1.0) / 4.0
@@ -116,6 +124,12 @@ class DrumSequencer:
                 (v, n) for v, n in VOICE_NOTES.items()
                 if self.pattern.is_armed(v, self._step)
             ]
+            if voices_to_play:
+                print(
+                    f"drum: step {self._step + 1}/{N_STEPS} → "
+                    + ", ".join(f"{v}(MIDI {n})" for v, n in voices_to_play),
+                    flush=True,
+                )
             for voice, note in voices_to_play:
                 try:
                     self.midi.note_on(note, velocity=110, channel=self.channel)

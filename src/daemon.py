@@ -324,7 +324,13 @@ class StreamDeckClaude:
                 self.deck.set_key_image(pos, native)
 
     def _on_key_change(self, deck, key: int, pressed: bool):
-        """Handle physical button press."""
+        """Handle physical button press or release."""
+        # MIDI buttons want both edges — hold a key, hold the note. The
+        # rest of the buttons fire once on press only.
+        btn = self.button_map.get(key)
+        if btn is not None and btn.type == "midi":
+            self._handle_midi(btn, on=pressed)
+            return
         if not pressed:
             return
 
@@ -528,19 +534,25 @@ class StreamDeckClaude:
             self.midi = None
         return self.midi
 
-    def _handle_midi(self, btn: ButtonConfig) -> None:
+    def _handle_midi(self, btn: ButtonConfig, on: bool = True) -> None:
+        """Send NoteOn on press, NoteOff on release.
+
+        Held-key behaviour: Stream Deck fires `set_key_callback` with
+        pressed=True when you push the button and pressed=False when
+        you let go. Mapping that directly to NoteOn / NoteOff means
+        a held button = a held note — sustained chords, long pad
+        notes, drum rolls.
+        """
         mo = self._connect_midi()
         if mo is None or btn.midi_note is None:
             return
         try:
-            mo.note_on(btn.midi_note, btn.midi_velocity, btn.midi_channel)
-            # Brief auto-off — Stream Deck buttons aren't pressure-sensitive.
-            threading.Timer(
-                0.15,
-                lambda: mo.note_off(btn.midi_note, btn.midi_channel),
-            ).start()
+            if on:
+                mo.note_on(btn.midi_note, btn.midi_velocity, btn.midi_channel)
+            else:
+                mo.note_off(btn.midi_note, btn.midi_channel)
         except Exception as e:
-            print(f"  midi: note_on {btn.midi_note} failed — {e}")
+            print(f"  midi: note {'on' if on else 'off'} {btn.midi_note} failed — {e}")
 
     # ── Drum sequencer ────────────────────────────────────────────
 
