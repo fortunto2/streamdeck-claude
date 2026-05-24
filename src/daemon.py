@@ -518,7 +518,11 @@ class StreamDeckClaude:
         try:
             self.midi = MidiOut()
             if self.verbose:
-                print("  midi: virtual port 'StreamDeck' opened")
+                kind = self.midi.opened_kind
+                print(f"  midi: {kind} port '{self.midi.opened_name}' opened")
+                if kind == "iac":
+                    print("       (IAC Driver — survives daemon restart; "
+                          "enable as MIDI input in REAPER once)")
         except Exception as e:
             print(f"  midi: open failed — {e}")
             self.midi = None

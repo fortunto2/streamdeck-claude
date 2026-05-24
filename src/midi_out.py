@@ -1,12 +1,17 @@
-"""Virtual MIDI output port — Stream Deck as a MIDI controller.
+"""MIDI output port — Stream Deck as a MIDI controller.
 
-Opens a virtual MIDI output that any DAW can subscribe to (REAPER →
-Preferences → MIDI Devices → enable the "StreamDeck" virtual port).
+Three strategies, in order of preference:
 
-Used by:
-- the MIDI page (32 buttons mapped to notes / CCs)
-- the Drum page (16-step sequencer; on each clock tick it emits
-  NoteOn events for the steps that are armed)
+1. **macOS IAC Driver** — if `Audio MIDI Setup.app → MIDI Studio →
+   IAC Driver` is online with at least one bus, we open the first
+   available bus. The IAC port is system-persistent — survives daemon
+   restarts. REAPER's MIDI Devices preference holds the enable state
+   forever once you turn it on.
+2. **Existing port matching `port_name`** — if the user has another
+   loopback (loopMIDI on Windows, etc.) that matches "StreamDeck".
+3. **Virtual port** — open a fresh virtual port named `StreamDeck`.
+   Disappears when the daemon exits, so REAPER may forget to re-enable
+   it on next launch (the well-known macOS virtual-port quirk).
 """
 
 from __future__ import annotations
@@ -14,7 +19,6 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Iterable
 
 try:
     import rtmidi
@@ -27,15 +31,43 @@ PORT_NAME = "StreamDeck"
 
 
 class MidiOut:
-    """Wraps a virtual MIDI output port. Thread-safe note send."""
+    """Wraps a MIDI output port. Thread-safe note send."""
 
-    def __init__(self, port_name: str = PORT_NAME):
+    def __init__(self, port_name: str = PORT_NAME, prefer_iac: bool = True):
         if rtmidi is None:
             raise RuntimeError("python-rtmidi not installed")
         self._midi = rtmidi.MidiOut()
-        self._midi.open_virtual_port(port_name)
         self._lock = threading.Lock()
-        log.info("MIDI virtual port opened: %s", port_name)
+        self.port_name = port_name
+        # Probe available output ports.
+        names = self._midi.get_ports()
+        chosen_idx: int | None = None
+        chosen_label: str | None = None
+        if prefer_iac:
+            for i, n in enumerate(names):
+                # macOS shows IAC ports as "IAC Driver Bus 1", "IAC Driver Bus 2", …
+                if "IAC Driver" in n:
+                    chosen_idx = i
+                    chosen_label = n
+                    break
+        if chosen_idx is None:
+            for i, n in enumerate(names):
+                if port_name.lower() in n.lower():
+                    chosen_idx = i
+                    chosen_label = n
+                    break
+        if chosen_idx is not None:
+            self._midi.open_port(chosen_idx)
+            log.info("MIDI: opened existing port %s", chosen_label)
+            self.opened_kind = "iac" if "IAC Driver" in (chosen_label or "") else "existing"
+            self.opened_name = chosen_label or port_name
+        else:
+            # Fall back to a virtual port (ephemeral — REAPER may need a
+            # "Reset all MIDI devices" after each daemon restart).
+            self._midi.open_virtual_port(port_name)
+            log.info("MIDI: opened virtual port %s", port_name)
+            self.opened_kind = "virtual"
+            self.opened_name = port_name
 
     def close(self) -> None:
         with self._lock:
