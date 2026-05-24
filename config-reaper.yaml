@@ -17,11 +17,16 @@
 deck:
   brightness: 60
   poll_interval: 5
-  project_dir: ~
+  # YAML treats bare `~` as null — quote the home shortcut.
+  project_dir: "~"
 
 reaper:
   enabled: true
-  send_host: 100.96.0.1     # REAPER's Local IP from Control Surface dialog
+  # `send_host` must match REAPER's "Local IP" in Preferences →
+  # Control Surface → OSC. REAPER picks the first active network
+  # interface — Tailscale (100.96.x.x), Wi-Fi (192.168.x.x), etc.
+  # Override with `REAPER_OSC_SEND_HOST` env var on different networks.
+  send_host: 192.168.1.2    # current Wi-Fi LAN
   send_port: 8000           # REAPER's Local listen port
   listen_host: 127.0.0.1    # We listen on loopback for feedback
   listen_port: 9000         # REAPER's Device port (where it pushes to us)

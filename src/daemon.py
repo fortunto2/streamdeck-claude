@@ -396,18 +396,25 @@ class StreamDeckClaude:
             print("  reaper: python-osc not installed — skipping")
             return None
         rc_cfg = self.config.reaper
+        # Env vars override the yaml — useful when REAPER's Local IP
+        # changes (different Wi-Fi, Tailscale up/down) and you don't
+        # want to edit the config each time.
+        send_host = os.environ.get("REAPER_OSC_SEND_HOST", rc_cfg.send_host)
+        send_port = int(os.environ.get("REAPER_OSC_SEND_PORT", rc_cfg.send_port))
+        listen_host = os.environ.get("REAPER_OSC_LISTEN_HOST", rc_cfg.listen_host)
+        listen_port = int(os.environ.get("REAPER_OSC_LISTEN_PORT", rc_cfg.listen_port))
         try:
             self.reaper = ReaperClient(
-                send_host=rc_cfg.send_host,
-                send_port=rc_cfg.send_port,
-                listen_host=rc_cfg.listen_host,
-                listen_port=rc_cfg.listen_port,
+                send_host=send_host,
+                send_port=send_port,
+                listen_host=listen_host,
+                listen_port=listen_port,
             )
             self.reaper.start_listening()
             if self.verbose:
                 print(
-                    f"  reaper: sending → {rc_cfg.send_host}:{rc_cfg.send_port}, "
-                    f"listening on {rc_cfg.listen_host}:{rc_cfg.listen_port}"
+                    f"  reaper: sending → {send_host}:{send_port}, "
+                    f"listening on {listen_host}:{listen_port}"
                 )
         except Exception as e:
             print(f"  reaper: connect failed — {e}")

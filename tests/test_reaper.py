@@ -81,16 +81,23 @@ def test_track_mute_on(client_and_received):
 def test_track_mute_toggle(client_and_received):
     client, received = client_and_received
     client.track_mute(track=3)  # toggle
-    args = _await(received, "/track/3/mute")
-    assert args == ("",)
+    args = _await(received, "/track/3/mute/toggle")
+    assert args == (1,)
 
 
 def test_fx_bypass_on(client_and_received):
-    """on=True means FX is ACTIVE → REAPER value 0 (bypassed=False)."""
+    """on=True means FX is ACTIVE → REAPER value 1 (active=True)."""
     client, received = client_and_received
     client.fx_bypass(track=2, fx=1, on=True)
     args = _await(received, "/track/2/fxbypass/1")
-    assert args == (0,)
+    assert args == (1,)
+
+
+def test_fx_bypass_toggle(client_and_received):
+    client, received = client_and_received
+    client.fx_bypass(track=2, fx=1)
+    args = _await(received, "/track/2/fxbypass/1/toggle")
+    assert args == (1,)
 
 
 def test_fx_param_value(client_and_received):

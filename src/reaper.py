@@ -220,6 +220,7 @@ class ReaperClient:
         self._client.send_message("/forward", 1)
 
     def set_tempo(self, bpm: float) -> None:
+        # REAPER's `TEMPO` action accepts `/tempo/raw` for raw BPM.
         self._client.send_message("/tempo/raw", float(bpm))
 
     # ── Tracks ───────────────────────────────────────────────────
@@ -228,21 +229,26 @@ class ReaperClient:
         self._client.send_message(f"/track/{track}/select", 1)
 
     def track_mute(self, track: int, on: bool | None = None) -> None:
-        """Set mute = on, or toggle if `on` is None."""
+        """Set mute = on, or toggle if `on` is None.
+
+        REAPER OSC convention (Default + StreamDeck patterns):
+          /track/N/mute            ← `b` binary set (0 or 1)
+          /track/N/mute/toggle     ← `t` trigger to flip
+        """
         if on is None:
-            self._client.send_message(f"/track/{track}/mute", "")  # toggle
+            self._client.send_message(f"/track/{track}/mute/toggle", 1)
         else:
             self._client.send_message(f"/track/{track}/mute", 1 if on else 0)
 
     def track_solo(self, track: int, on: bool | None = None) -> None:
         if on is None:
-            self._client.send_message(f"/track/{track}/solo", "")
+            self._client.send_message(f"/track/{track}/solo/toggle", 1)
         else:
             self._client.send_message(f"/track/{track}/solo", 1 if on else 0)
 
     def track_arm(self, track: int, on: bool | None = None) -> None:
         if on is None:
-            self._client.send_message(f"/track/{track}/recarm", "")
+            self._client.send_message(f"/track/{track}/recarm/toggle", 1)
         else:
             self._client.send_message(f"/track/{track}/recarm", 1 if on else 0)
 
@@ -260,12 +266,17 @@ class ReaperClient:
     # ── FX ───────────────────────────────────────────────────────
 
     def fx_bypass(self, track: int, fx: int, on: bool | None = None) -> None:
-        """Toggle or set FX bypass on a track's FX chain slot."""
+        """Toggle or set FX bypass on a track's FX chain slot.
+
+        REAPER `FX_BYPASS` action:
+          /track/N/fxbypass/M           ← `b` binary (1=active, 0=bypassed)
+          /track/N/fxbypass/M/toggle    ← `t` trigger to flip
+        """
         if on is None:
-            self._client.send_message(f"/track/{track}/fxbypass/{fx}", "")
+            self._client.send_message(f"/track/{track}/fxbypass/{fx}/toggle", 1)
         else:
-            # 1 = active, 0 = bypassed in REAPER's convention.
-            self._client.send_message(f"/track/{track}/fxbypass/{fx}", 0 if on else 1)
+            # `on` here means "FX is doing its thing" → active=1, bypassed=0.
+            self._client.send_message(f"/track/{track}/fxbypass/{fx}", 1 if on else 0)
 
     def fx_param(self, track: int, fx: int, param: int, value: float) -> None:
         """Set an FX param value, normalised 0..1."""
