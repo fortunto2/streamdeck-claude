@@ -15,6 +15,18 @@ from src.config import AppConfig, ButtonConfig, load_config
 from src.monitors import MonitorThread
 from src.renderer import render_button, render_text_button, status_to_color
 
+# Music-production layer — REAPER OSC + virtual MIDI port. Imports are
+# guarded so the daemon still starts if the music deps aren't installed
+# (e.g. CI image without rtmidi system headers).
+try:
+    from src.reaper import ReaperClient
+except Exception:  # pragma: no cover
+    ReaperClient = None  # type: ignore[assignment]
+try:
+    from src.midi_out import MidiOut
+except Exception:  # pragma: no cover
+    MidiOut = None  # type: ignore[assignment]
+
 
 def find_deck():
     """Find first visual Stream Deck device."""
@@ -34,14 +46,29 @@ class StreamDeckClaude:
         self.verbose = verbose
         self.state: dict = {}
         self.state_lock = threading.Lock()
-        self.button_map: dict[int, ButtonConfig] = {
-            btn.pos: btn for btn in config.buttons
-        }
+        # ---- Pages ------------------------------------------------
+        # Legacy mode: config has flat `buttons` list, no `pages` dict.
+        # New mode: config has `pages`, the active page is `current_page`.
+        # Either way, `self.pages` always has at least one entry called
+        # `default_page` so the rest of the daemon can stay page-agnostic.
+        if config.pages:
+            self.pages = {name: list(btns) for name, btns in config.pages.items()}
+        else:
+            self.pages = {config.default_page: list(config.buttons)}
+        self.current_page = config.default_page
+        if self.current_page not in self.pages:
+            # Fall back to the first defined page if default is missing.
+            self.current_page = next(iter(self.pages.keys()))
+        self.button_map: dict[int, ButtonConfig] = {}
         self.brightness_level = 0
         self.brightness_levels = [30, 70, 100]
-        # Dynamic tmux session buttons: positions 16-23
+        # Dynamic tmux session buttons (dashboard page only): 16-23.
         self.tmux_session_range = range(16, 24)
-        self.tmux_sessions: list[dict] = []  # live session list
+        self.tmux_sessions: list[dict] = []
+        # Lazy music-production clients — created on first need so the
+        # daemon still starts when REAPER isn't running.
+        self.reaper: ReaperClient | None = None
+        self.midi: MidiOut | None = None
 
     def start(self):
         """Initialize deck and start monitoring."""
@@ -49,9 +76,12 @@ class StreamDeckClaude:
         self.deck.reset()
         self.deck.set_brightness(self.config.deck.brightness)
 
-        # Render initial button images
-        for btn in self.config.buttons:
-            self._render_button(btn)
+        # Open REAPER OSC at start if enabled. Failures are non-fatal —
+        # daemon still runs other pages if REAPER isn't listening.
+        if self.config.reaper.enabled and self.config.reaper.auto_connect:
+            self._connect_reaper()
+
+        self._render_current_page()
 
         # Start monitor thread
         project_dir = os.path.expanduser(self.config.deck.project_dir)
@@ -73,6 +103,17 @@ class StreamDeckClaude:
     def stop(self):
         """Shutdown cleanly."""
         self.monitor.stop()
+        if self.reaper is not None:
+            try:
+                self.reaper.stop_listening()
+            except Exception:
+                pass
+        if self.midi is not None:
+            try:
+                self.midi.all_notes_off()
+                self.midi.close()
+            except Exception:
+                pass
         self.deck.reset()
         self.deck.close()
 
@@ -274,6 +315,17 @@ class StreamDeckClaude:
         elif btn.type == "monitor":
             # Monitor buttons: press to show detail (future)
             pass
+        elif btn.type == "page":
+            if btn.page:
+                self._switch_page(btn.page)
+        elif btn.type == "reaper":
+            self._handle_reaper(btn)
+        elif btn.type == "midi":
+            self._handle_midi(btn)
+        elif btn.type == "drum_step":
+            # TODO: wire to DrumSequencer once the Drum page lands.
+            if self.verbose:
+                print(f"  drum_step: voice={btn.drum_voice} step={btn.drum_step}")
 
     def _handle_action(self, btn: ButtonConfig):
         """Execute a button action."""
@@ -308,6 +360,103 @@ class StreamDeckClaude:
         elif btn.action == "exit":
             self.stop()
             sys.exit(0)
+
+    # ── Page switching ─────────────────────────────────────────────
+
+    def _render_current_page(self) -> None:
+        """Re-render every button on the active page."""
+        active = self.pages.get(self.current_page, [])
+        self.button_map = {btn.pos: btn for btn in active}
+        # Blank out everything first so leftovers from the previous
+        # page don't stay visible on positions the new page doesn't use.
+        blank_img = render_text_button(bg_color="#000000")
+        native_blank = PILHelper.to_native_key_format(self.deck, blank_img)
+        with self.deck:
+            for k in range(self.deck.key_count()):
+                self.deck.set_key_image(k, native_blank)
+        for btn in active:
+            self._render_button(btn)
+
+    def _switch_page(self, page_name: str) -> None:
+        """Jump to another named page. Re-renders all buttons."""
+        if page_name not in self.pages:
+            print(f"  unknown page: {page_name} (have: {list(self.pages)})")
+            return
+        if self.verbose:
+            print(f"  → page: {page_name}")
+        self.current_page = page_name
+        self._render_current_page()
+
+    # ── REAPER (lazy) ─────────────────────────────────────────────
+
+    def _connect_reaper(self) -> ReaperClient | None:
+        if self.reaper is not None:
+            return self.reaper
+        if ReaperClient is None:
+            print("  reaper: python-osc not installed — skipping")
+            return None
+        rc_cfg = self.config.reaper
+        try:
+            self.reaper = ReaperClient(
+                send_host=rc_cfg.send_host,
+                send_port=rc_cfg.send_port,
+                listen_host=rc_cfg.listen_host,
+                listen_port=rc_cfg.listen_port,
+            )
+            self.reaper.start_listening()
+            if self.verbose:
+                print(
+                    f"  reaper: sending → {rc_cfg.send_host}:{rc_cfg.send_port}, "
+                    f"listening on {rc_cfg.listen_host}:{rc_cfg.listen_port}"
+                )
+        except Exception as e:
+            print(f"  reaper: connect failed — {e}")
+            self.reaper = None
+        return self.reaper
+
+    def _handle_reaper(self, btn: ButtonConfig) -> None:
+        rc = self._connect_reaper()
+        if rc is None or not btn.reaper_method:
+            return
+        method = getattr(rc, btn.reaper_method, None)
+        if method is None:
+            print(f"  reaper: unknown method {btn.reaper_method!r}")
+            return
+        try:
+            method(**(btn.reaper_args or {}))
+        except Exception as e:
+            print(f"  reaper: {btn.reaper_method} failed — {e}")
+
+    # ── MIDI (lazy) ───────────────────────────────────────────────
+
+    def _connect_midi(self) -> MidiOut | None:
+        if self.midi is not None:
+            return self.midi
+        if MidiOut is None:
+            print("  midi: python-rtmidi not installed — skipping")
+            return None
+        try:
+            self.midi = MidiOut()
+            if self.verbose:
+                print("  midi: virtual port 'StreamDeck' opened")
+        except Exception as e:
+            print(f"  midi: open failed — {e}")
+            self.midi = None
+        return self.midi
+
+    def _handle_midi(self, btn: ButtonConfig) -> None:
+        mo = self._connect_midi()
+        if mo is None or btn.midi_note is None:
+            return
+        try:
+            mo.note_on(btn.midi_note, btn.midi_velocity, btn.midi_channel)
+            # Brief auto-off — Stream Deck buttons aren't pressure-sensitive.
+            threading.Timer(
+                0.15,
+                lambda: mo.note_off(btn.midi_note, btn.midi_channel),
+            ).start()
+        except Exception as e:
+            print(f"  midi: note_on {btn.midi_note} failed — {e}")
 
 
 def main():

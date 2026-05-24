@@ -1,0 +1,157 @@
+# Stream Deck XL — REAPER live + MIDI / Drum mode layout.
+#
+# To use:
+#   uv run streamdeck-claude --config config-reaper.yaml --verbose
+#
+# Layout (Stream Deck XL, 8 cols × 4 rows = 32 buttons):
+#
+#  Reaper page (default):
+#    Row 0: ⏪ ⏮ ▶ ⏸ ⏹ ⏺ 🔁 [→Midi]
+#    Row 1: TR1 TR2 TR3 TR4 TR5 TR6 TR7 TR8   (mute toggle, OSC LED feedback)
+#    Row 2: FX1 FX2 FX3 FX4 FX5 FX6 FX7 FX8   (bypass on selected track)
+#    Row 3: M1  M2  M3  M4  M5  M6  M7  [→Drum]
+#
+#  Midi page: 32 buttons as chromatic notes (2.5 octaves from C3).
+#  Drum page: 16-step grid + 6 voice select + transport + tempo.
+
+deck:
+  brightness: 60
+  poll_interval: 5
+  project_dir: ~
+
+reaper:
+  enabled: true
+  send_host: 100.96.0.1     # REAPER's Local IP from Control Surface dialog
+  send_port: 8000           # REAPER's Local listen port
+  listen_host: 127.0.0.1    # We listen on loopback for feedback
+  listen_port: 9000         # REAPER's Device port (where it pushes to us)
+  auto_connect: true
+
+default_page: reaper
+
+pages:
+  # ═════════════════════════════════════════════════════════════════
+  # REAPER live page
+  # ═════════════════════════════════════════════════════════════════
+  reaper:
+    # Row 0: transport (positions 0-7)
+    - { pos: 0, type: reaper, reaper_method: transport_rewind, label: "⏪", color: "#444" }
+    - { pos: 1, type: reaper, reaper_method: goto_marker, reaper_args: { marker_idx: 1 }, label: "⏮ 1" }
+    - { pos: 2, type: reaper, reaper_method: transport_play, label: "▶ PLAY", color: "#22c55e" }
+    - { pos: 3, type: reaper, reaper_method: transport_stop, label: "⏹ STOP", color: "#444" }
+    - { pos: 4, type: reaper, reaper_method: transport_record, label: "⏺ REC", color: "#ef4444" }
+    - { pos: 5, type: reaper, reaper_method: transport_loop_toggle, label: "🔁 LOOP" }
+    - { pos: 6, type: reaper, reaper_method: insert_marker_here, label: "📍 MARK" }
+    - { pos: 7, type: page, page: midi, label: "→ MIDI", color: "#3b82f6" }
+
+    # Row 1: track 1-8 mute (positions 8-15)
+    - { pos: 8,  type: reaper, reaper_method: track_mute, reaper_args: { track: 1 }, label: "T1 mute" }
+    - { pos: 9,  type: reaper, reaper_method: track_mute, reaper_args: { track: 2 }, label: "T2 mute" }
+    - { pos: 10, type: reaper, reaper_method: track_mute, reaper_args: { track: 3 }, label: "T3 mute" }
+    - { pos: 11, type: reaper, reaper_method: track_mute, reaper_args: { track: 4 }, label: "T4 mute" }
+    - { pos: 12, type: reaper, reaper_method: track_mute, reaper_args: { track: 5 }, label: "T5 mute" }
+    - { pos: 13, type: reaper, reaper_method: track_mute, reaper_args: { track: 6 }, label: "T6 mute" }
+    - { pos: 14, type: reaper, reaper_method: track_mute, reaper_args: { track: 7 }, label: "T7 mute" }
+    - { pos: 15, type: reaper, reaper_method: track_mute, reaper_args: { track: 8 }, label: "T8 mute" }
+
+    # Row 2: track 1-8 solo (positions 16-23)
+    - { pos: 16, type: reaper, reaper_method: track_solo, reaper_args: { track: 1 }, label: "T1 solo" }
+    - { pos: 17, type: reaper, reaper_method: track_solo, reaper_args: { track: 2 }, label: "T2 solo" }
+    - { pos: 18, type: reaper, reaper_method: track_solo, reaper_args: { track: 3 }, label: "T3 solo" }
+    - { pos: 19, type: reaper, reaper_method: track_solo, reaper_args: { track: 4 }, label: "T4 solo" }
+    - { pos: 20, type: reaper, reaper_method: track_solo, reaper_args: { track: 5 }, label: "T5 solo" }
+    - { pos: 21, type: reaper, reaper_method: track_solo, reaper_args: { track: 6 }, label: "T6 solo" }
+    - { pos: 22, type: reaper, reaper_method: track_solo, reaper_args: { track: 7 }, label: "T7 solo" }
+    - { pos: 23, type: reaper, reaper_method: track_solo, reaper_args: { track: 8 }, label: "T8 solo" }
+
+    # Row 3: markers + page switch (positions 24-31)
+    - { pos: 24, type: reaper, reaper_method: goto_marker, reaper_args: { marker_idx: 1 }, label: "M 1" }
+    - { pos: 25, type: reaper, reaper_method: goto_marker, reaper_args: { marker_idx: 2 }, label: "M 2" }
+    - { pos: 26, type: reaper, reaper_method: goto_marker, reaper_args: { marker_idx: 3 }, label: "M 3" }
+    - { pos: 27, type: reaper, reaper_method: goto_marker, reaper_args: { marker_idx: 4 }, label: "M 4" }
+    - { pos: 28, type: reaper, reaper_method: goto_marker, reaper_args: { marker_idx: 5 }, label: "M 5" }
+    - { pos: 29, type: reaper, reaper_method: goto_marker, reaper_args: { marker_idx: 6 }, label: "M 6" }
+    - { pos: 30, type: reaper, reaper_method: goto_marker, reaper_args: { marker_idx: 7 }, label: "M 7" }
+    - { pos: 31, type: page, page: drum, label: "→ DRUM", color: "#a855f7" }
+
+  # ═════════════════════════════════════════════════════════════════
+  # MIDI page — chromatic keyboard, 32 notes starting at C3 (MIDI 48)
+  # ═════════════════════════════════════════════════════════════════
+  midi:
+    # Generated as chromatic notes 48..79 (C3..G5). Black-key colour
+    # set on the buttons that fall on accidentals.
+    - { pos: 0,  type: midi, midi_note: 48, label: "C3"  }
+    - { pos: 1,  type: midi, midi_note: 49, label: "C#3", color: "#1a1a1a" }
+    - { pos: 2,  type: midi, midi_note: 50, label: "D3"  }
+    - { pos: 3,  type: midi, midi_note: 51, label: "D#3", color: "#1a1a1a" }
+    - { pos: 4,  type: midi, midi_note: 52, label: "E3"  }
+    - { pos: 5,  type: midi, midi_note: 53, label: "F3"  }
+    - { pos: 6,  type: midi, midi_note: 54, label: "F#3", color: "#1a1a1a" }
+    - { pos: 7,  type: midi, midi_note: 55, label: "G3"  }
+    - { pos: 8,  type: midi, midi_note: 56, label: "G#3", color: "#1a1a1a" }
+    - { pos: 9,  type: midi, midi_note: 57, label: "A3"  }
+    - { pos: 10, type: midi, midi_note: 58, label: "A#3", color: "#1a1a1a" }
+    - { pos: 11, type: midi, midi_note: 59, label: "B3"  }
+    - { pos: 12, type: midi, midi_note: 60, label: "C4"  }
+    - { pos: 13, type: midi, midi_note: 61, label: "C#4", color: "#1a1a1a" }
+    - { pos: 14, type: midi, midi_note: 62, label: "D4"  }
+    - { pos: 15, type: midi, midi_note: 63, label: "D#4", color: "#1a1a1a" }
+    - { pos: 16, type: midi, midi_note: 64, label: "E4"  }
+    - { pos: 17, type: midi, midi_note: 65, label: "F4"  }
+    - { pos: 18, type: midi, midi_note: 66, label: "F#4", color: "#1a1a1a" }
+    - { pos: 19, type: midi, midi_note: 67, label: "G4"  }
+    - { pos: 20, type: midi, midi_note: 68, label: "G#4", color: "#1a1a1a" }
+    - { pos: 21, type: midi, midi_note: 69, label: "A4"  }
+    - { pos: 22, type: midi, midi_note: 70, label: "A#4", color: "#1a1a1a" }
+    - { pos: 23, type: midi, midi_note: 71, label: "B4"  }
+    - { pos: 24, type: midi, midi_note: 72, label: "C5"  }
+    - { pos: 25, type: midi, midi_note: 73, label: "C#5", color: "#1a1a1a" }
+    - { pos: 26, type: midi, midi_note: 74, label: "D5"  }
+    - { pos: 27, type: midi, midi_note: 75, label: "D#5", color: "#1a1a1a" }
+    - { pos: 28, type: midi, midi_note: 76, label: "E5"  }
+    - { pos: 29, type: midi, midi_note: 77, label: "F5"  }
+    - { pos: 30, type: midi, midi_note: 78, label: "F#5", color: "#1a1a1a" }
+    - { pos: 31, type: page, page: reaper, label: "← REAPER", color: "#3b82f6" }
+
+  # ═════════════════════════════════════════════════════════════════
+  # Drum page — 16-step grid + 6 voice select + transport
+  # (stepped sequencer wiring lands in the next commit; for now this
+  # page mostly proves page-switching works and lets the user audition
+  # voices via single-shot MIDI notes on channel 10 = GM drums)
+  # ═════════════════════════════════════════════════════════════════
+  drum:
+    # Row 0: voice auditions (single shot when clicked)
+    - { pos: 0, type: midi, midi_note: 48, midi_channel: 9, label: "KICK",  color: "#ef4444" }
+    - { pos: 1, type: midi, midi_note: 50, midi_channel: 9, label: "SNARE", color: "#f97316" }
+    - { pos: 2, type: midi, midi_note: 52, midi_channel: 9, label: "HHc",   color: "#facc15" }
+    - { pos: 3, type: midi, midi_note: 53, midi_channel: 9, label: "HHo",   color: "#84cc16" }
+    - { pos: 4, type: midi, midi_note: 55, midi_channel: 9, label: "CLAP",  color: "#06b6d4" }
+    - { pos: 5, type: midi, midi_note: 57, midi_channel: 9, label: "COWB",  color: "#a855f7" }
+    - { pos: 6, type: reaper, reaper_method: transport_play, label: "▶", color: "#22c55e" }
+    - { pos: 7, type: reaper, reaper_method: transport_stop, label: "⏹" }
+    # Row 1-2: 16-step grid placeholder (drum_step type not yet wired)
+    - { pos: 8,  type: drum_step, drum_voice: kick, drum_step: 0,  label: "1" }
+    - { pos: 9,  type: drum_step, drum_voice: kick, drum_step: 1,  label: "2" }
+    - { pos: 10, type: drum_step, drum_voice: kick, drum_step: 2,  label: "3" }
+    - { pos: 11, type: drum_step, drum_voice: kick, drum_step: 3,  label: "4" }
+    - { pos: 12, type: drum_step, drum_voice: kick, drum_step: 4,  label: "5" }
+    - { pos: 13, type: drum_step, drum_voice: kick, drum_step: 5,  label: "6" }
+    - { pos: 14, type: drum_step, drum_voice: kick, drum_step: 6,  label: "7" }
+    - { pos: 15, type: drum_step, drum_voice: kick, drum_step: 7,  label: "8" }
+    - { pos: 16, type: drum_step, drum_voice: kick, drum_step: 8,  label: "9" }
+    - { pos: 17, type: drum_step, drum_voice: kick, drum_step: 9,  label: "10" }
+    - { pos: 18, type: drum_step, drum_voice: kick, drum_step: 10, label: "11" }
+    - { pos: 19, type: drum_step, drum_voice: kick, drum_step: 11, label: "12" }
+    - { pos: 20, type: drum_step, drum_voice: kick, drum_step: 12, label: "13" }
+    - { pos: 21, type: drum_step, drum_voice: kick, drum_step: 13, label: "14" }
+    - { pos: 22, type: drum_step, drum_voice: kick, drum_step: 14, label: "15" }
+    - { pos: 23, type: drum_step, drum_voice: kick, drum_step: 15, label: "16" }
+    # Row 3: tempo + page switch
+    - { pos: 24, type: reaper, reaper_method: set_tempo, reaper_args: { bpm: 80 },  label: "80 bpm" }
+    - { pos: 25, type: reaper, reaper_method: set_tempo, reaper_args: { bpm: 100 }, label: "100"    }
+    - { pos: 26, type: reaper, reaper_method: set_tempo, reaper_args: { bpm: 120 }, label: "120"    }
+    - { pos: 27, type: reaper, reaper_method: set_tempo, reaper_args: { bpm: 140 }, label: "140"    }
+    - { pos: 28, type: reaper, reaper_method: set_tempo, reaper_args: { bpm: 160 }, label: "160"    }
+    - { pos: 29, type: reaper, reaper_method: set_tempo, reaper_args: { bpm: 180 }, label: "180"    }
+    - { pos: 30, type: action, action: brightness,                                 label: "BRIGHT" }
+    - { pos: 31, type: page, page: reaper, label: "← REAPER", color: "#3b82f6" }
