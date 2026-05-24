@@ -172,8 +172,14 @@ class StreamDeckClaude:
             self.deck.set_key_image(btn.pos, native)
 
     def _on_state_change(self, new_state: dict):
-        """Called by monitor thread when state changes."""
-        # Update monitor buttons with big text
+        """Called by monitor thread when state changes.
+
+        Only repaints if the dashboard page is active — when the user
+        is on the REAPER / MIDI / Drum page, those buttons own positions
+        16-23 and a 3-second monitor tick mustn't blank them grey.
+        """
+        if self.current_page != "dashboard":
+            return
         for btn in self.config.buttons:
             if btn.type != "monitor":
                 continue
@@ -181,8 +187,6 @@ class StreamDeckClaude:
                 self._render_pipeline(btn, new_state.get("pipeline_detail"))
                 continue
             self._render_monitor_text(btn, new_state)
-
-        # Update dynamic tmux session buttons (row 3)
         sessions = new_state.get("tmux_sessions", [])
         self._render_tmux_sessions(sessions)
 
@@ -333,9 +337,10 @@ class StreamDeckClaude:
             return
         if not pressed:
             return
-
-        # Dynamic tmux session buttons
-        if key in self.tmux_session_range:
+        # Legacy dashboard: dynamic tmux session buttons live on 16-23.
+        # Skip this branch on any other page so REAPER / MIDI / Drum
+        # buttons at those positions get their normal handler.
+        if self.current_page == "dashboard" and key in self.tmux_session_range:
             idx = key - self.tmux_session_range.start
             if idx < len(self.tmux_sessions):
                 sess = self.tmux_sessions[idx]
@@ -344,7 +349,6 @@ class StreamDeckClaude:
                 tmux_switch(sess["name"])
             return
 
-        btn = self.button_map.get(key)
         if not btn:
             return
 
