@@ -484,8 +484,9 @@ class StreamDeckClaude:
             )
             self.reaper.start_listening()
             if self.verbose:
+                hosts = ", ".join(self.reaper._hosts)
                 print(
-                    f"  reaper: sending → {send_host}:{send_port}, "
+                    f"  reaper: sending → [{hosts}]:{send_port}, "
                     f"listening on {listen_host}:{listen_port}"
                 )
         except Exception as e:

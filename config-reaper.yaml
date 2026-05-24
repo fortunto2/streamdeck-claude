@@ -22,11 +22,13 @@ deck:
 
 reaper:
   enabled: true
-  # `send_host` must match REAPER's "Local IP" in Preferences →
-  # Control Surface → OSC. REAPER picks the first active network
-  # interface — Tailscale (100.96.x.x), Wi-Fi (192.168.x.x), etc.
-  # Override with `REAPER_OSC_SEND_HOST` env var on different networks.
-  send_host: 192.168.1.2    # current Wi-Fi LAN
+  # `auto` enumerates every local network interface and fans every
+  # OSC message out to all of them. REAPER picks one at startup
+  # (Tailscale 100.96.x.x, Wi-Fi 192.168.x.x, loopback, ...) — and
+  # with `auto` we hit it no matter which. Switch Wi-Fi networks,
+  # toggle Tailscale, plug Ethernet — daemon keeps working without
+  # config edits. Override with REAPER_OSC_SEND_HOST for a fixed IP.
+  send_host: auto
   send_port: 8000           # REAPER's Local listen port
   listen_host: 127.0.0.1    # We listen on loopback for feedback
   listen_port: 9000         # REAPER's Device port (where it pushes to us)
