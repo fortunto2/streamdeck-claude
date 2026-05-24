@@ -69,6 +69,15 @@ Every game runs directly on the Stream Deck keys with sound effects and voice pa
 
 Games feature persistent high scores, voice packs per game, and sound effects via a shared audio engine.
 
+### Music Production (REAPER + DAW)
+
+| Page | What |
+|---|---|
+| **REAPER Live** | Transport (play/stop/rec/loop), track mute/solo/arm, marker / scene jumps, FX bypass — all over OSC, two-way (button LEDs mirror REAPER state). See [docs/reaper-setup.md](docs/reaper-setup.md) for the one-time OSC config. |
+| **SuperDuper Plugins** | Per-plugin pages built from the [`src/superduper_catalog.py`](src/superduper_catalog.py) mirror of [SuperDuper DSP](https://github.com/fortunto2/superduper-dsp)'s Rust `PARAMS` tables. Pick NAM / Vocal / Soothe / Filter / Saturator / Comp / Limit / Wave / Kubyz / Drum / Looper and the buttons map to that plugin's specific params. Knob-style continuous params, LED toggles for booleans (Plos On, Ess Listen…), radio chips for enums (Saturator Type, Soothe Mode…). |
+| **MIDI Controller** | 32 buttons as a chromatic keyboard / pad grid via a virtual MIDI port — any DAW (REAPER, Logic, Ableton, Bitwig) sees a `StreamDeck` device. |
+| **Drum Sequencer** | 16-step pattern + 6 voice select for SuperDuper Drum (Kick / Snare / HHc / HHo / Clap / Cowbell on white keys C-A). Background clock thread fires NoteOn on armed steps. Tempo + start/stop/clear. |
+
 ## Requirements
 
 - macOS (uses `afplay` for audio, `launchd` for daemon, `ioreg` for idle detection)
