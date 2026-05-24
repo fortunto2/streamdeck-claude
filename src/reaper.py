@@ -61,6 +61,17 @@ class ReaperState:
     track_mute: dict[int, bool] = field(default_factory=dict)
     track_solo: dict[int, bool] = field(default_factory=dict)
     track_arm: dict[int, bool] = field(default_factory=dict)
+    # 0..1 normalised volume (REAPER convention).
+    track_volume: dict[int, float] = field(default_factory=dict)
+    # -1..+1 pan (-1 = full left, 0 = centre, +1 = full right).
+    track_pan: dict[int, float] = field(default_factory=dict)
+    track_name: dict[int, str] = field(default_factory=dict)
+    # Master fader state.
+    master_volume: float = 1.0
+    master_pan: float = 0.0
+    # VU / peak meters (0..1 normalised, REAPER pushes at ~60 Hz).
+    track_vu: dict[int, float] = field(default_factory=dict)
+    master_vu: float = 0.0
     # Per-(track, fx) bypass state.
     fx_bypass: dict[tuple[int, int], bool] = field(default_factory=dict)
     _lock: threading.Lock = field(default_factory=threading.Lock)
@@ -303,6 +314,16 @@ class ReaperClient:
         disp.map("/track/*/mute", _wrap(self._handle_track_mute), needs_reply_address=True)
         disp.map("/track/*/solo", _wrap(self._handle_track_solo), needs_reply_address=True)
         disp.map("/track/*/recarm", _wrap(self._handle_track_arm), needs_reply_address=True)
+        # Mixer feedback — REAPER pushes these whenever the user moves
+        # a fader / pan knob / renames a track in the project.
+        disp.map("/track/*/volume", _wrap(self._handle_track_volume), needs_reply_address=True)
+        disp.map("/track/*/pan", _wrap(self._handle_track_pan), needs_reply_address=True)
+        disp.map("/track/*/name", _wrap(self._handle_track_name), needs_reply_address=True)
+        disp.map("/master/volume", _wrap(self._handle_master_volume), needs_reply_address=True)
+        disp.map("/master/pan", _wrap(self._handle_master_pan), needs_reply_address=True)
+        # VU / peak — high-rate push, daemon throttles repaints.
+        disp.map("/track/*/vu", _wrap(self._handle_track_vu), needs_reply_address=True)
+        disp.map("/master/vu", _wrap(self._handle_master_vu), needs_reply_address=True)
         self._server = ThreadingOSCUDPServer((self._listen_host, self._listen_port), disp)
         self._server_thread = threading.Thread(
             target=self._server.serve_forever, daemon=True, name="reaper-osc"
@@ -384,6 +405,85 @@ class ReaperClient:
             return
         with self.state._lock:
             self.state.track_arm[idx] = value >= 0.5
+        self._notify()
+
+    def _handle_track_volume(self, addr: str, value) -> None:
+        idx = self._track_idx_from_addr(addr)
+        if idx is None:
+            return
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return
+        with self.state._lock:
+            self.state.track_volume[idx] = v
+        self._notify()
+
+    def _handle_track_pan(self, addr: str, value) -> None:
+        idx = self._track_idx_from_addr(addr)
+        if idx is None:
+            return
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return
+        with self.state._lock:
+            self.state.track_pan[idx] = v
+        self._notify()
+
+    def _handle_track_name(self, addr: str, value) -> None:
+        idx = self._track_idx_from_addr(addr)
+        if idx is None:
+            return
+        with self.state._lock:
+            self.state.track_name[idx] = str(value)
+        self._notify()
+
+    def _handle_master_volume(self, _addr: str, value) -> None:
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return
+        with self.state._lock:
+            self.state.master_volume = v
+        self._notify()
+
+    def _handle_master_pan(self, _addr: str, value) -> None:
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return
+        with self.state._lock:
+            self.state.master_pan = v
+        self._notify()
+
+    def _handle_track_vu(self, addr: str, value) -> None:
+        # `/track/N/vu` (mono peak) or `/track/N/vu/L|R`. Take the max
+        # of L/R for a single-bar render. Address can be either form.
+        idx = self._track_idx_from_addr(addr)
+        if idx is None:
+            return
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return
+        with self.state._lock:
+            prev = self.state.track_vu.get(idx, 0.0)
+            # If addr is /vu/L or /vu/R, keep max so the bar shows the
+            # louder channel. Mono /vu overwrites both.
+            if addr.endswith("/L") or addr.endswith("/R"):
+                self.state.track_vu[idx] = max(prev, v)
+            else:
+                self.state.track_vu[idx] = v
+        self._notify()
+
+    def _handle_master_vu(self, _addr: str, value) -> None:
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return
+        with self.state._lock:
+            self.state.master_vu = v
         self._notify()
 
     # ── Transport ────────────────────────────────────────────────

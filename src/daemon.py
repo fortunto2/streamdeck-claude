@@ -112,6 +112,17 @@ class StreamDeckClaude:
             self._connect_reaper()
             if self.reaper is not None:
                 self.reaper._on_change = self._on_reaper_state
+                # VU repaint throttle — 15 Hz max so the deck doesn't
+                # choke on REAPER's 60 Hz peak push. Stopped at shutdown.
+                self._vu_stop = threading.Event()
+                def _vu_loop():
+                    while not self._vu_stop.is_set():
+                        if self.current_page == "reaper":
+                            self._vu_repaint_tick()
+                        self._vu_stop.wait(0.07)
+                threading.Thread(
+                    target=_vu_loop, daemon=True, name="vu-tick"
+                ).start()
                 # Ask REAPER to push a fresh snapshot of every track
                 # state so button LEDs reflect the project on startup.
                 self.reaper.action(40769)  # Track: Unselect all tracks (cheap no-op refresh)
@@ -138,6 +149,8 @@ class StreamDeckClaude:
     def stop(self):
         """Shutdown cleanly."""
         self.monitor.stop()
+        if hasattr(self, "_vu_stop"):
+            self._vu_stop.set()
         if self.reaper is not None:
             try:
                 self.reaper.stop_listening()
@@ -726,19 +739,121 @@ class StreamDeckClaude:
             self.deck.set_key_image(btn.pos, native)
 
     def _render_track_state(self, btn: ButtonConfig, kind: str, on: bool) -> None:
-        if not on:
-            self._render_button(btn)  # back to default colour
-            return
-        bg = {"mute": "#ef4444", "solo": "#facc15", "arm": "#fb923c"}[kind]
-        img = render_text_button(
-            lines=[btn.label or ""],
-            bg_color=bg,
-            font_sizes=[18],
-            colors=["#0f172a"],  # dark text on bright bg
-        )
+        # Delegate to the rich renderer so name + VU bar still show
+        # under the mute / solo / arm tint.
+        self._render_track_button(btn, kind=kind, active=on)
+
+    def _render_track_button(
+        self, btn: ButtonConfig, kind: str, active: bool
+    ) -> None:
+        """Paint a track button with name + current VU bar + state tint.
+
+        Picks the data straight from `self.reaper.state` so any caller
+        (state-change repaint, VU throttle tick, page render) gets the
+        same look. Background tint encodes mute / solo / arm; the right-
+        edge column is a vertical peak meter; the centre label is the
+        track name from REAPER (falls back to the config label).
+        """
+        from PIL import Image, ImageDraw
+
+        track = (btn.reaper_args or {}).get("track")
+        state = self.reaper.state if self.reaper else None
+        name = None
+        vu = 0.0
+        if state and isinstance(track, int):
+            with state._lock:
+                name = state.track_name.get(track)
+                vu = state.track_vu.get(track, 0.0)
+        label = name or btn.label or (f"T{track}" if track else "?")
+
+        # Background tint — bright when active, dim default otherwise.
+        if active:
+            bg = {"mute": "#7f1d1d", "solo": "#92400e", "arm": "#7c2d12"}.get(kind, "#1e3a5f")
+            txt = "#fde68a"
+        else:
+            bg = "#1e3a5f"
+            txt = "#cbd5e1"
+
+        img = Image.new("RGB", (96, 96), bg)
+        draw = ImageDraw.Draw(img)
+        # State-kind chip in the top-left corner (M / S / A so the user
+        # remembers which row the button belongs to).
+        chip = {"mute": "M", "solo": "S", "arm": "A"}.get(kind, "")
+        if chip:
+            chip_color = "#ef4444" if (kind == "mute" and active) else (
+                "#facc15" if (kind == "solo" and active) else (
+                    "#fb923c" if (kind == "arm" and active) else "#475569"
+                )
+            )
+            try:
+                from src.renderer import _font
+                draw.text((4, 0), chip, fill=chip_color, font=_font(14))
+            except Exception:
+                pass
+        # Track name centred (auto-fit by truncating).
+        try:
+            from src.renderer import _font
+            font = _font(16)
+            disp_label = label
+            while font.getlength(disp_label) > 84 and len(disp_label) > 1:
+                disp_label = disp_label[:-1]
+            tw = font.getlength(disp_label)
+            draw.text(((96 - tw) / 2, 38), disp_label, fill=txt, font=font)
+        except Exception:
+            draw.text((6, 38), str(label)[:8], fill=txt)
+        # VU bar on the right edge — 10 px wide, height from bottom.
+        meter_h = int(min(max(vu, 0.0), 1.0) * 80)
+        if meter_h > 0:
+            bar_color = (
+                "#ef4444" if vu > 0.85 else
+                "#facc15" if vu > 0.6 else
+                "#22c55e"
+            )
+            draw.rectangle([84, 92 - meter_h, 92, 92], fill=bar_color)
+        # Faint meter outline so the bar's "zero level" is always visible.
+        draw.rectangle([84, 12, 92, 92], outline="#334155", width=1)
+
         native = PILHelper.to_native_key_format(self.deck, img)
         with self.deck:
             self.deck.set_key_image(btn.pos, native)
+
+    def _vu_repaint_tick(self) -> None:
+        """Repaint every track button with the current VU level.
+
+        Called by the throttle thread — REAPER pushes VU at 60 Hz, but
+        we redraw at most ~15 Hz so the deck stays responsive.
+        """
+        if self.reaper is None:
+            return
+        seen: set[int] = set()
+        for tracks_index, kind in (
+            (self._mute_btns, "mute"),
+            (self._solo_btns, "solo"),
+            (self._arm_btns, "arm"),
+        ):
+            for track, positions in tracks_index.items():
+                for pos in positions:
+                    btn = self.button_map.get(pos)
+                    if btn is None:
+                        continue
+                    # Don't double-paint if mute+solo on same pos; first
+                    # wins by setdefault.
+                    if pos in seen:
+                        continue
+                    seen.add(pos)
+                    on = False
+                    state = self.reaper.state
+                    with state._lock:
+                        if kind == "mute":
+                            on = state.track_mute.get(track, False)
+                        elif kind == "solo":
+                            on = state.track_solo.get(track, False)
+                        elif kind == "arm":
+                            on = state.track_arm.get(track, False)
+                    try:
+                        self._render_track_button(btn, kind=kind, active=on)
+                    except Exception:
+                        pass
 
 
 def main():
