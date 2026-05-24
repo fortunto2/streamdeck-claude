@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -130,7 +131,33 @@ def _enumerate_local_ipv4() -> list[str]:
     except Exception:
         pass
 
-    return sorted(addrs)
+    # Sort by likely-active priority so the default candidate (before
+    # discovery probes) is the IP REAPER is most likely bound to.
+    # Private LAN (192.168 / 10 / 172.16-31) first, loopback second,
+    # CGNAT / Tailscale (100.64-127) last because that interface is
+    # often "up" but not what REAPER actually listens on.
+    def _rank(ip: str) -> int:
+        if ip.startswith(("192.168.", "10.")):
+            return 0
+        if ip.startswith("172."):
+            try:
+                second = int(ip.split(".")[1])
+                if 16 <= second <= 31:
+                    return 0
+            except (ValueError, IndexError):
+                pass
+        if ip == "127.0.0.1":
+            return 1
+        if ip.startswith("100."):
+            try:
+                second = int(ip.split(".")[1])
+                if 64 <= second <= 127:
+                    return 3  # CGNAT / Tailscale
+            except (ValueError, IndexError):
+                pass
+        return 2
+
+    return sorted(addrs, key=lambda ip: (_rank(ip), ip))
 
 
 class ReaperClient:
@@ -158,28 +185,77 @@ class ReaperClient:
                 "python-osc not installed — `uv pip install python-osc` "
                 "(already in pyproject)."
             )
-        # Multi-host fan-out when send_host = "auto".
+        # Send to ONE host at a time — fanning the same `/play 1` to
+        # three interfaces makes REAPER fire the action three times,
+        # which toggles play/stop/play and yields a one-frame audio
+        # blip instead of sustained playback. `auto` enumerates the
+        # candidates and probes them at start (`discover_active_host`)
+        # to pick the one that actually reaches REAPER.
         if send_host == "auto":
-            self._hosts = _enumerate_local_ipv4()
-            self._clients = [SimpleUDPClient(h, send_port) for h in self._hosts]
+            self._host_candidates = _enumerate_local_ipv4()
+            self._active_host = self._host_candidates[0]
         else:
-            self._hosts = [send_host]
-            self._clients = [SimpleUDPClient(send_host, send_port)]
-        self._client = self._clients[0]  # back-compat for code that pokes _client
+            self._host_candidates = [send_host]
+            self._active_host = send_host
+        self._send_port = send_port
+        self._client = SimpleUDPClient(self._active_host, send_port)
         self.state = ReaperState()
         self._on_change = state_changed
         self._server: ThreadingOSCUDPServer | None = None
         self._server_thread: threading.Thread | None = None
         self._listen_host = listen_host
         self._listen_port = listen_port
+        # Used by `discover_active_host` — set to the IP that delivered
+        # the most recent feedback packet to our listening server.
+        self._last_feedback_from: str | None = None
 
     def _send(self, addr: str, value) -> None:
-        """Fan out one OSC message to every send-host client."""
-        for c in self._clients:
+        """Send one OSC message to the currently-active REAPER host."""
+        try:
+            self._client.send_message(addr, value)
+        except Exception:
+            pass
+
+    def set_active_host(self, host: str) -> None:
+        """Switch the send-target host at runtime. Used by discovery."""
+        if host == self._active_host:
+            return
+        self._active_host = host
+        self._client = SimpleUDPClient(host, self._send_port)
+        log.info("REAPER OSC active host → %s", host)
+
+    def discover_active_host(self, timeout: float = 1.0) -> str | None:
+        """Probe candidates until REAPER answers on the feedback port.
+
+        Loops the candidate IPs, sends a no-op `/track/0/select 0`
+        (REAPER acks any addressed message with feedback if the OSC
+        listener heard it), and waits up to `timeout` seconds for the
+        listener server to log a packet. First host that triggers a
+        response wins; the cached `_active_host` updates and `_client`
+        re-points so subsequent transport calls land on the right IP.
+
+        Requires `start_listening()` to have been called first.
+        """
+        if self._server is None:
+            return None
+        for host in self._host_candidates:
+            probe_client = SimpleUDPClient(host, self._send_port)
+            self._last_feedback_from = None
             try:
-                c.send_message(addr, value)
+                # `/device/track/count` is a benign query — REAPER replies
+                # with the current track count on the feedback channel.
+                probe_client.send_message("/device/track/count", 0)
+                probe_client.send_message("/track/1/name", "")
             except Exception:
-                pass  # one bad interface shouldn't kill the others
+                continue
+            # Wait briefly for a feedback packet to land.
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                if self._last_feedback_from is not None:
+                    self.set_active_host(host)
+                    return host
+                time.sleep(0.02)
+        return None
 
     @classmethod
     def from_env(cls, **kwargs: Any) -> ReaperClient:
@@ -199,15 +275,34 @@ class ReaperClient:
         if self._server is not None:
             return
         disp = Dispatcher()
-        disp.map("/play", self._handle_play)
-        disp.map("/stop", self._handle_stop)
-        disp.map("/record", self._handle_record)
-        disp.map("/repeat", self._handle_repeat)
-        disp.map("/tempo/raw", self._handle_tempo)
-        disp.map("/marker/current", self._handle_marker)
-        disp.map("/track/*/mute", self._handle_track_mute)
-        disp.map("/track/*/solo", self._handle_track_solo)
-        disp.map("/track/*/recarm", self._handle_track_arm)
+        # Catch-all that just records the source IP — used by
+        # `discover_active_host` to figure out which interface
+        # REAPER replied from.
+        def _src_tap(client_address, *_args, **_kw):
+            try:
+                self._last_feedback_from = client_address[0]
+            except Exception:
+                pass
+        disp.set_default_handler(_src_tap, needs_reply_address=True)
+        # Specific handlers — same as before, but wrapped so they ALSO
+        # update `_last_feedback_from` like the default handler does.
+        def _wrap(orig_handler):
+            def _wrapped(client_address, addr, *args, **kw):
+                try:
+                    self._last_feedback_from = client_address[0]
+                except Exception:
+                    pass
+                orig_handler(addr, *args, **kw)
+            return _wrapped
+        disp.map("/play", _wrap(self._handle_play), needs_reply_address=True)
+        disp.map("/stop", _wrap(self._handle_stop), needs_reply_address=True)
+        disp.map("/record", _wrap(self._handle_record), needs_reply_address=True)
+        disp.map("/repeat", _wrap(self._handle_repeat), needs_reply_address=True)
+        disp.map("/tempo/raw", _wrap(self._handle_tempo), needs_reply_address=True)
+        disp.map("/marker/current", _wrap(self._handle_marker), needs_reply_address=True)
+        disp.map("/track/*/mute", _wrap(self._handle_track_mute), needs_reply_address=True)
+        disp.map("/track/*/solo", _wrap(self._handle_track_solo), needs_reply_address=True)
+        disp.map("/track/*/recarm", _wrap(self._handle_track_arm), needs_reply_address=True)
         self._server = ThreadingOSCUDPServer((self._listen_host, self._listen_port), disp)
         self._server_thread = threading.Thread(
             target=self._server.serve_forever, daemon=True, name="reaper-osc"

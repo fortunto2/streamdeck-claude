@@ -494,11 +494,24 @@ class StreamDeckClaude:
             )
             self.reaper.start_listening()
             if self.verbose:
-                hosts = ", ".join(self.reaper._hosts)
+                candidates = ", ".join(self.reaper._host_candidates)
                 print(
-                    f"  reaper: sending → [{hosts}]:{send_port}, "
+                    f"  reaper: candidates [{candidates}]:{send_port}, "
                     f"listening on {listen_host}:{listen_port}"
                 )
+            # Probe candidates to find which IP REAPER actually answers
+            # on (Tailscale / Wi-Fi / loopback). Done after listener
+            # start so feedback packets land in the dispatcher.
+            picked = self.reaper.discover_active_host(timeout=1.0)
+            if self.verbose:
+                if picked:
+                    print(f"  reaper: active host → {picked}")
+                else:
+                    print(
+                        f"  reaper: no feedback yet, defaulting to "
+                        f"{self.reaper._active_host} — check REAPER OSC "
+                        f"config (pattern + listen port 8000)"
+                    )
         except Exception as e:
             print(f"  reaper: connect failed — {e}")
             self.reaper = None
