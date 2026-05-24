@@ -57,6 +57,10 @@ class ButtonConfig:
     # Drum sequencer step toggle: type="drum_step", drum_voice + drum_step.
     drum_voice: str | None = None
     drum_step: int | None = None
+    # Drum transport / utility: type="drum_action", drum_action one of
+    # "play", "stop", "clear", "clear_voice", "select_voice", "set_bpm".
+    drum_action: str | None = None
+    drum_bpm: float | None = None
     # Page switch: type="page", page = destination page name.
     page: str | None = None
     # Optional: which colour scheme to use for the button.

@@ -26,6 +26,12 @@ try:
     from src.midi_out import MidiOut
 except Exception:  # pragma: no cover
     MidiOut = None  # type: ignore[assignment]
+try:
+    from src.drum_seq import DrumSequencer, VOICES, N_STEPS
+except Exception:  # pragma: no cover
+    DrumSequencer = None  # type: ignore[assignment]
+    VOICES = ()  # type: ignore[assignment]
+    N_STEPS = 16
 
 
 def find_deck():
@@ -69,6 +75,20 @@ class StreamDeckClaude:
         # daemon still starts when REAPER isn't running.
         self.reaper: ReaperClient | None = None
         self.midi: MidiOut | None = None
+        self.drum = None  # DrumSequencer, instantiated below
+        # Map: track_idx → list of button positions on the active page
+        # that mirror that track's mute / solo / arm state. Filled on
+        # page-render; used by REAPER feedback handler.
+        self._mute_btns: dict[int, list[int]] = {}
+        self._solo_btns: dict[int, list[int]] = {}
+        self._arm_btns: dict[int, list[int]] = {}
+        # Transport buttons get a state-aware repaint when /play /repeat
+        # state changes.
+        self._play_btns: list[int] = []
+        self._loop_btns: list[int] = []
+        self._record_btns: list[int] = []
+        # Drum step buttons indexed by step number for playhead colouring.
+        self._drum_step_btns: dict[int, int] = {}
 
     def start(self):
         """Initialize deck and start monitoring."""
@@ -76,10 +96,25 @@ class StreamDeckClaude:
         self.deck.reset()
         self.deck.set_brightness(self.config.deck.brightness)
 
-        # Open REAPER OSC at start if enabled. Failures are non-fatal —
-        # daemon still runs other pages if REAPER isn't listening.
+        # Eagerly open the music-production clients if any page needs
+        # them — this way REAPER's MIDI Devices preferences only have
+        # to be enabled once (the virtual port stays open for the
+        # whole daemon lifetime instead of appearing on first press).
+        needs_midi = any(
+            btn.type in ("midi", "drum_step")
+            for page in self.pages.values()
+            for btn in page
+        )
+        if needs_midi:
+            self._connect_midi()
+            self._connect_drum()
         if self.config.reaper.enabled and self.config.reaper.auto_connect:
             self._connect_reaper()
+            if self.reaper is not None:
+                self.reaper._on_change = self._on_reaper_state
+                # Ask REAPER to push a fresh snapshot of every track
+                # state so button LEDs reflect the project on startup.
+                self.reaper.action(40769)  # Track: Unselect all tracks (cheap no-op refresh)
 
         self._render_current_page()
 
@@ -323,9 +358,9 @@ class StreamDeckClaude:
         elif btn.type == "midi":
             self._handle_midi(btn)
         elif btn.type == "drum_step":
-            # TODO: wire to DrumSequencer once the Drum page lands.
-            if self.verbose:
-                print(f"  drum_step: voice={btn.drum_voice} step={btn.drum_step}")
+            self._handle_drum_step(btn)
+        elif btn.type == "drum_action":
+            self._handle_drum_action(btn)
 
     def _handle_action(self, btn: ButtonConfig):
         """Execute a button action."""
@@ -367,6 +402,36 @@ class StreamDeckClaude:
         """Re-render every button on the active page."""
         active = self.pages.get(self.current_page, [])
         self.button_map = {btn.pos: btn for btn in active}
+        # Build the reverse indices the feedback handlers use to map
+        # REAPER state changes back to button positions.
+        self._mute_btns.clear()
+        self._solo_btns.clear()
+        self._arm_btns.clear()
+        self._play_btns = []
+        self._loop_btns = []
+        self._record_btns = []
+        self._drum_step_btns = {}
+        for btn in active:
+            if btn.type == "reaper" and btn.reaper_method == "track_mute":
+                track = (btn.reaper_args or {}).get("track")
+                if isinstance(track, int):
+                    self._mute_btns.setdefault(track, []).append(btn.pos)
+            elif btn.type == "reaper" and btn.reaper_method == "track_solo":
+                track = (btn.reaper_args or {}).get("track")
+                if isinstance(track, int):
+                    self._solo_btns.setdefault(track, []).append(btn.pos)
+            elif btn.type == "reaper" and btn.reaper_method == "track_arm":
+                track = (btn.reaper_args or {}).get("track")
+                if isinstance(track, int):
+                    self._arm_btns.setdefault(track, []).append(btn.pos)
+            elif btn.type == "reaper" and btn.reaper_method == "transport_play":
+                self._play_btns.append(btn.pos)
+            elif btn.type == "reaper" and btn.reaper_method == "transport_loop_toggle":
+                self._loop_btns.append(btn.pos)
+            elif btn.type == "reaper" and btn.reaper_method == "transport_record":
+                self._record_btns.append(btn.pos)
+            elif btn.type == "drum_step" and btn.drum_step is not None:
+                self._drum_step_btns[btn.drum_step] = btn.pos
         # Blank out everything first so leftovers from the previous
         # page don't stay visible on positions the new page doesn't use.
         blank_img = render_text_button(bg_color="#000000")
@@ -375,7 +440,14 @@ class StreamDeckClaude:
             for k in range(self.deck.key_count()):
                 self.deck.set_key_image(k, native_blank)
         for btn in active:
-            self._render_button(btn)
+            # Drum step buttons get their own render path that knows
+            # about armed/playhead state — call it instead of the
+            # generic render_button.
+            if btn.type == "drum_step":
+                voice = self.drum.selected_voice if self.drum else "kick"
+                self._render_drum_step(btn, voice=voice, is_playhead=False)
+            else:
+                self._render_button(btn)
 
     def _switch_page(self, page_name: str) -> None:
         """Jump to another named page. Re-renders all buttons."""
@@ -464,6 +536,175 @@ class StreamDeckClaude:
             ).start()
         except Exception as e:
             print(f"  midi: note_on {btn.midi_note} failed — {e}")
+
+    # ── Drum sequencer ────────────────────────────────────────────
+
+    def _connect_drum(self):
+        if self.drum is not None:
+            return self.drum
+        if DrumSequencer is None:
+            return None
+        mo = self._connect_midi()
+        if mo is None:
+            return None
+        self.drum = DrumSequencer(midi=mo)
+        # Repaint the active step on every tick — a live playhead so
+        # the user can see where the pattern is at.
+        self.drum.set_step_callback(self._on_drum_step)
+        if self.verbose:
+            print("  drum: sequencer ready, channel 10")
+        return self.drum
+
+    def _handle_drum_action(self, btn: ButtonConfig) -> None:
+        seq = self._connect_drum()
+        if seq is None or btn.drum_action is None:
+            return
+        act = btn.drum_action
+        if act == "play":
+            seq.start()
+        elif act == "stop":
+            seq.stop()
+            self._render_current_page()  # clear playhead colouring
+        elif act == "clear":
+            seq.clear()
+            self._render_current_page()
+        elif act == "clear_voice":
+            if btn.drum_voice:
+                seq.pattern.clear_voice(btn.drum_voice)
+                self._render_current_page()
+        elif act == "select_voice":
+            if btn.drum_voice:
+                seq.select_voice(btn.drum_voice)
+                self._render_current_page()  # repaint steps for new voice
+        elif act == "set_bpm":
+            if btn.drum_bpm is not None:
+                seq.bpm = float(btn.drum_bpm)
+        if self.verbose:
+            print(f"  drum_action: {act}")
+
+    def _handle_drum_step(self, btn: ButtonConfig) -> None:
+        seq = self._connect_drum()
+        if seq is None:
+            return
+        # If no drum_voice on the button, use the currently-selected
+        # voice (Drum page voice-select buttons set it).
+        voice = btn.drum_voice or seq.selected_voice
+        if btn.drum_step is None:
+            return
+        seq.toggle_step(voice, btn.drum_step)
+        if self.verbose:
+            armed = seq.pattern.is_armed(voice, btn.drum_step)
+            print(f"  drum_step: {voice} step {btn.drum_step} → {'on' if armed else 'off'}")
+        # Repaint the step button to show armed/unarmed state.
+        self._render_button(btn)
+
+    def _on_drum_step(self, step: int) -> None:
+        """Called every step tick by DrumSequencer — paints the playhead."""
+        # Find the step buttons for the *current* drum voice and brighten
+        # the one matching the step we just played.
+        if self.drum is None:
+            return
+        try:
+            voice = self.drum.selected_voice
+            for s, pos in self._drum_step_btns.items():
+                btn = self.button_map.get(pos)
+                if btn is None:
+                    continue
+                # Make the playhead pop, dim the others.
+                self._render_drum_step(btn, voice=voice, is_playhead=(s == step))
+        except Exception as e:
+            if self.verbose:
+                print(f"  drum step paint failed: {e}")
+
+    def _render_drum_step(self, btn: ButtonConfig, voice: str, is_playhead: bool) -> None:
+        """Repaint a drum step button with armed / playhead colouring."""
+        if self.drum is None:
+            return
+        step = btn.drum_step
+        armed = self.drum.pattern.is_armed(voice, step) if step is not None else False
+        if is_playhead:
+            bg = "#22c55e" if armed else "#475569"  # bright green / mid grey
+        else:
+            bg = "#1e40af" if armed else "#0f172a"  # deep blue armed / very dark idle
+        img = render_text_button(
+            lines=[btn.label or f"{(step or 0) + 1}"],
+            bg_color=bg,
+            font_sizes=[22],
+            colors=["#ffffff" if is_playhead else "#cbd5e1"],
+        )
+        native = PILHelper.to_native_key_format(self.deck, img)
+        with self.deck:
+            self.deck.set_key_image(btn.pos, native)
+
+    # ── REAPER state feedback ─────────────────────────────────────
+
+    def _on_reaper_state(self, state) -> None:
+        """ReaperClient feedback subscriber → repaints state-aware buttons."""
+        try:
+            # Transport buttons (play / loop / record).
+            for pos in self._play_btns:
+                btn = self.button_map.get(pos)
+                if btn:
+                    self._render_transport_state(btn, "play", state.playing)
+            for pos in self._loop_btns:
+                btn = self.button_map.get(pos)
+                if btn:
+                    self._render_transport_state(btn, "loop", state.looping)
+            for pos in self._record_btns:
+                btn = self.button_map.get(pos)
+                if btn:
+                    self._render_transport_state(btn, "record", state.recording)
+            # Per-track mute / solo / arm.
+            for track, on in state.track_mute.items():
+                for pos in self._mute_btns.get(track, []):
+                    btn = self.button_map.get(pos)
+                    if btn:
+                        self._render_track_state(btn, "mute", on)
+            for track, on in state.track_solo.items():
+                for pos in self._solo_btns.get(track, []):
+                    btn = self.button_map.get(pos)
+                    if btn:
+                        self._render_track_state(btn, "solo", on)
+            for track, on in state.track_arm.items():
+                for pos in self._arm_btns.get(track, []):
+                    btn = self.button_map.get(pos)
+                    if btn:
+                        self._render_track_state(btn, "arm", on)
+        except Exception as e:
+            if self.verbose:
+                print(f"  reaper state repaint failed: {e}")
+
+    def _render_transport_state(self, btn: ButtonConfig, kind: str, on: bool) -> None:
+        if kind == "play":
+            bg = "#22c55e" if on else "#1e3a5f"  # bright green when playing
+        elif kind == "loop":
+            bg = "#a855f7" if on else "#1e3a5f"  # purple
+        else:  # record
+            bg = "#ef4444" if on else "#1e3a5f"  # red
+        img = render_text_button(
+            lines=[btn.label or ""],
+            bg_color=bg,
+            font_sizes=[20],
+            colors=["#ffffff"],
+        )
+        native = PILHelper.to_native_key_format(self.deck, img)
+        with self.deck:
+            self.deck.set_key_image(btn.pos, native)
+
+    def _render_track_state(self, btn: ButtonConfig, kind: str, on: bool) -> None:
+        if not on:
+            self._render_button(btn)  # back to default colour
+            return
+        bg = {"mute": "#ef4444", "solo": "#facc15", "arm": "#fb923c"}[kind]
+        img = render_text_button(
+            lines=[btn.label or ""],
+            bg_color=bg,
+            font_sizes=[18],
+            colors=["#0f172a"],  # dark text on bright bg
+        )
+        native = PILHelper.to_native_key_format(self.deck, img)
+        with self.deck:
+            self.deck.set_key_image(btn.pos, native)
 
 
 def main():

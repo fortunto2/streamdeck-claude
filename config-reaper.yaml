@@ -125,38 +125,41 @@ pages:
   # voices via single-shot MIDI notes on channel 10 = GM drums)
   # ═════════════════════════════════════════════════════════════════
   drum:
-    # Row 0: voice auditions (single shot when clicked)
-    - { pos: 0, type: midi, midi_note: 48, midi_channel: 9, label: "KICK",  color: "#ef4444" }
-    - { pos: 1, type: midi, midi_note: 50, midi_channel: 9, label: "SNARE", color: "#f97316" }
-    - { pos: 2, type: midi, midi_note: 52, midi_channel: 9, label: "HHc",   color: "#facc15" }
-    - { pos: 3, type: midi, midi_note: 53, midi_channel: 9, label: "HHo",   color: "#84cc16" }
-    - { pos: 4, type: midi, midi_note: 55, midi_channel: 9, label: "CLAP",  color: "#06b6d4" }
-    - { pos: 5, type: midi, midi_note: 57, midi_channel: 9, label: "COWB",  color: "#a855f7" }
-    - { pos: 6, type: reaper, reaper_method: transport_play, label: "▶", color: "#22c55e" }
-    - { pos: 7, type: reaper, reaper_method: transport_stop, label: "⏹" }
-    # Row 1-2: 16-step grid placeholder (drum_step type not yet wired)
-    - { pos: 8,  type: drum_step, drum_voice: kick, drum_step: 0,  label: "1" }
-    - { pos: 9,  type: drum_step, drum_voice: kick, drum_step: 1,  label: "2" }
-    - { pos: 10, type: drum_step, drum_voice: kick, drum_step: 2,  label: "3" }
-    - { pos: 11, type: drum_step, drum_voice: kick, drum_step: 3,  label: "4" }
-    - { pos: 12, type: drum_step, drum_voice: kick, drum_step: 4,  label: "5" }
-    - { pos: 13, type: drum_step, drum_voice: kick, drum_step: 5,  label: "6" }
-    - { pos: 14, type: drum_step, drum_voice: kick, drum_step: 6,  label: "7" }
-    - { pos: 15, type: drum_step, drum_voice: kick, drum_step: 7,  label: "8" }
-    - { pos: 16, type: drum_step, drum_voice: kick, drum_step: 8,  label: "9" }
-    - { pos: 17, type: drum_step, drum_voice: kick, drum_step: 9,  label: "10" }
-    - { pos: 18, type: drum_step, drum_voice: kick, drum_step: 10, label: "11" }
-    - { pos: 19, type: drum_step, drum_voice: kick, drum_step: 11, label: "12" }
-    - { pos: 20, type: drum_step, drum_voice: kick, drum_step: 12, label: "13" }
-    - { pos: 21, type: drum_step, drum_voice: kick, drum_step: 13, label: "14" }
-    - { pos: 22, type: drum_step, drum_voice: kick, drum_step: 14, label: "15" }
-    - { pos: 23, type: drum_step, drum_voice: kick, drum_step: 15, label: "16" }
-    # Row 3: tempo + page switch
-    - { pos: 24, type: reaper, reaper_method: set_tempo, reaper_args: { bpm: 80 },  label: "80 bpm" }
-    - { pos: 25, type: reaper, reaper_method: set_tempo, reaper_args: { bpm: 100 }, label: "100"    }
-    - { pos: 26, type: reaper, reaper_method: set_tempo, reaper_args: { bpm: 120 }, label: "120"    }
-    - { pos: 27, type: reaper, reaper_method: set_tempo, reaper_args: { bpm: 140 }, label: "140"    }
-    - { pos: 28, type: reaper, reaper_method: set_tempo, reaper_args: { bpm: 160 }, label: "160"    }
-    - { pos: 29, type: reaper, reaper_method: set_tempo, reaper_args: { bpm: 180 }, label: "180"    }
-    - { pos: 30, type: action, action: brightness,                                 label: "BRIGHT" }
+    # Row 0: voice select (sets which voice's row of steps is editable).
+    # Drum step buttons paint the pattern for the SELECTED voice — to
+    # programme the kick pattern, hit "K" first, then toggle steps.
+    - { pos: 0, type: drum_action, drum_action: select_voice, drum_voice: kick,    label: "K",  color: "#ef4444" }
+    - { pos: 1, type: drum_action, drum_action: select_voice, drum_voice: snare,   label: "Sn", color: "#f97316" }
+    - { pos: 2, type: drum_action, drum_action: select_voice, drum_voice: hhc,     label: "Hh", color: "#facc15" }
+    - { pos: 3, type: drum_action, drum_action: select_voice, drum_voice: hho,     label: "Ho", color: "#84cc16" }
+    - { pos: 4, type: drum_action, drum_action: select_voice, drum_voice: clap,    label: "Cl", color: "#06b6d4" }
+    - { pos: 5, type: drum_action, drum_action: select_voice, drum_voice: cowbell, label: "Cb", color: "#a855f7" }
+    - { pos: 6, type: drum_action, drum_action: play,  label: "▶ SEQ", color: "#22c55e" }
+    - { pos: 7, type: drum_action, drum_action: stop,  label: "⏹ SEQ" }
+    # Row 1-2: 16-step grid for the SELECTED voice. drum_voice left null
+    # so each press toggles the *current* voice (set via row 0).
+    - { pos: 8,  type: drum_step, drum_step: 0,  label: "1" }
+    - { pos: 9,  type: drum_step, drum_step: 1,  label: "2" }
+    - { pos: 10, type: drum_step, drum_step: 2,  label: "3" }
+    - { pos: 11, type: drum_step, drum_step: 3,  label: "4" }
+    - { pos: 12, type: drum_step, drum_step: 4,  label: "5" }
+    - { pos: 13, type: drum_step, drum_step: 5,  label: "6" }
+    - { pos: 14, type: drum_step, drum_step: 6,  label: "7" }
+    - { pos: 15, type: drum_step, drum_step: 7,  label: "8" }
+    - { pos: 16, type: drum_step, drum_step: 8,  label: "9" }
+    - { pos: 17, type: drum_step, drum_step: 9,  label: "10" }
+    - { pos: 18, type: drum_step, drum_step: 10, label: "11" }
+    - { pos: 19, type: drum_step, drum_step: 11, label: "12" }
+    - { pos: 20, type: drum_step, drum_step: 12, label: "13" }
+    - { pos: 21, type: drum_step, drum_step: 13, label: "14" }
+    - { pos: 22, type: drum_step, drum_step: 14, label: "15" }
+    - { pos: 23, type: drum_step, drum_step: 15, label: "16" }
+    # Row 3: BPM presets + clear current voice + page switch.
+    - { pos: 24, type: drum_action, drum_action: set_bpm, drum_bpm: 80,  label: "80"  }
+    - { pos: 25, type: drum_action, drum_action: set_bpm, drum_bpm: 100, label: "100" }
+    - { pos: 26, type: drum_action, drum_action: set_bpm, drum_bpm: 120, label: "120" }
+    - { pos: 27, type: drum_action, drum_action: set_bpm, drum_bpm: 140, label: "140" }
+    - { pos: 28, type: drum_action, drum_action: set_bpm, drum_bpm: 160, label: "160" }
+    - { pos: 29, type: drum_action, drum_action: clear, label: "CLEAR", color: "#7f1d1d" }
+    - { pos: 30, type: action, action: brightness,                       label: "BRIGHT" }
     - { pos: 31, type: page, page: reaper, label: "← REAPER", color: "#3b82f6" }
