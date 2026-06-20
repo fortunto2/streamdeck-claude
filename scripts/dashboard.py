@@ -38,6 +38,18 @@ import pomodoro
 import sound_engine
 import weather
 
+# Music-production control surfaces — REAPER (OSC) + Ableton Live
+# (AbletonOSC). Guarded so the dashboard still starts if the music deps
+# or src/ package aren't importable.
+try:
+    import reaper_control
+except Exception:  # pragma: no cover
+    reaper_control = None
+try:
+    import ableton_control
+except Exception:  # pragma: no cover
+    ableton_control = None
+
 # ── config ────────────────────────────────────────────────────────────
 
 SIZE = (96, 96)
@@ -479,9 +491,10 @@ BRIGHTNESS_LEVELS = [40, 60, 80, 100]
 class Dashboard:
     def __init__(self, deck):
         self.deck = deck
-        self.page = "home"  # home | games | agents
+        self.page = "home"  # home | games | agents | control
         self.active_game = None
         self.active_module = None
+        self.active_control = None  # ReaperControl / AbletonControl instance
         self.lock = threading.Lock()
         self.tick_timer = None
         self.running = False
@@ -568,8 +581,8 @@ class Dashboard:
         self.set_key(9, render_section_btn("CRYPTO", "REAL", "#0ea5e9"))
         self.set_key(10, render_section_btn("CRYPTO", "SIM", "#166534"))
         self.set_key(11, render_section_btn("AGENTS", "", "#7c3aed"))
-        self.set_key(12, render_greyed("CALENDAR", "SOON"))
-        self.set_key(13, render_section_btn("SIRI", "", "#1d4ed8"))
+        self.set_key(12, render_section_btn("REAPER", "mix", "#0f766e"))
+        self.set_key(13, render_section_btn("ABLETON", "live", "#f59e0b"))
         self.set_key(14, render_voice_btn(not sound_engine.global_mute))
         self.set_key(15, self._render_bright_btn())
 
@@ -795,6 +808,51 @@ class Dashboard:
             if hasattr(game, "running"):
                 game.running = False
 
+    # ── control surfaces (REAPER / Ableton) ───────────────────────────
+
+    def launch_control(self, factory):
+        """Launch a control surface that owns the whole deck.
+
+        `factory(deck, on_home)` returns an object with start()/stop()/
+        on_key(deck, key, pressed). on_home is the callback the surface
+        calls to return to the home screen.
+        """
+        self.pomo.stop()
+        self._stop_health_alert()
+        self._stop_control()  # in case one was already open
+        with self.lock:
+            self.page = "control"
+        self.deck.reset()
+        try:
+            controller = factory(self.deck, self._return_home_from_control)
+        except Exception as e:
+            print(f"control launch failed: {e}")
+            self.show_home()
+            return
+        with self.lock:
+            self.active_control = controller
+        self.deck.set_key_callback(controller.on_key)
+        try:
+            controller.start()
+        except Exception as e:
+            print(f"control start failed: {e}")
+            self._return_home_from_control()
+
+    def _return_home_from_control(self):
+        self._stop_control()
+        self.show_home()
+        self.deck.set_key_callback(self.on_key)
+
+    def _stop_control(self):
+        with self.lock:
+            ctl = self.active_control
+            self.active_control = None
+        if ctl is not None:
+            try:
+                ctl.stop()
+            except Exception:
+                pass
+
     # ── key handler ───────────────────────────────────────────────────
 
     def on_key(self, _deck, key: int, pressed: bool):
@@ -831,11 +889,15 @@ class Dashboard:
         if key == 11:
             self.show_agents()
             return
+        if key == 12:
+            # REAPER control surface (transport + live mixer over OSC)
+            if reaper_control is not None:
+                self.launch_control(reaper_control.ReaperControl)
+            return
         if key == 13:
-            # Siri
-            import subprocess
-            subprocess.Popen(["osascript", "-e", 'tell application "Siri" to activate'],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # Ableton Live control surface (Session clip launcher via AbletonOSC)
+            if ableton_control is not None:
+                self.launch_control(ableton_control.AbletonControl)
             return
         if key == 14:
             # Global sound mute toggle
@@ -975,6 +1037,7 @@ class Dashboard:
         finally:
             self.running = False
             self._cancel_tick()
+            self._stop_control()
 
     def _initial_fetch(self):
         """Fetch weather + crypto + air quality on startup, then update home."""
