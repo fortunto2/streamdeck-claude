@@ -1,13 +1,13 @@
-"""Music Hub — a section that groups every music instrument on the deck.
+"""Music Hub — section that groups every music instrument on the deck.
 
-Shows the shared tempo (Ableton Link) and which generator voices are
-live, and launches / switches between instruments: REAPER, Ableton, and
-the three generative voices (GEN A/B/C). Each instrument keeps running in
-the background; the hub is just the switchboard. Back from an instrument
-returns here; HOME returns to the main dashboard.
+Shows the shared Link tempo, a master start/stop for the generator voices,
+a preset/snapshot manager (save / cycle / load / delete), and launches /
+switches between instruments (REAPER, Ableton, GEN A/B/C). Each instrument
+keeps running in the background; the hub is the switchboard. Back from an
+instrument returns here; HOME returns to the main dashboard.
 
-Adding more instruments (the old MIDI sequencer, a drum machine, …) is a
-matter of dropping another entry in INSTRUMENTS.
+State autosaves continuously (isobar_engine), so a crash restores the last
+patterns on restart.
 """
 
 from __future__ import annotations
@@ -28,7 +28,8 @@ except Exception:  # pragma: no cover
     ableton_control = None
 try:
     import isobar_control
-    from isobar_engine import VOICES
+    from isobar_engine import (VOICES, start_all, stop_all, any_playing,
+                               save_preset, list_presets, load_preset, delete_preset)
 except Exception:  # pragma: no cover
     isobar_control = None
     VOICES = {}
@@ -40,7 +41,6 @@ def _gen_factory(voice):
     return make
 
 
-# (key, label, sublabel, colour, factory-or-None, voice-key-or-None)
 def _instruments():
     items = []
     if reaper_control is not None:
@@ -55,6 +55,13 @@ def _instruments():
 
 
 KEY_TEMPO = 0
+KEY_PLAY_ALL = 2
+KEY_STOP_ALL = 3
+KEY_SAVE = 24
+KEY_PREV = 25
+KEY_NAME = 26      # tap = load selected preset
+KEY_NEXT = 27
+KEY_DEL = 28
 KEY_HOME = ControlSurface.HOME_KEY  # 31
 FPS = 4.0
 
@@ -64,6 +71,8 @@ class MusicHub(ControlSurface):
     def __init__(self, deck, on_home):
         super().__init__(deck, on_home)
         self.items = _instruments()
+        self.presets = list_presets() if isobar_control else []
+        self.sel = max(0, len(self.presets) - 1)
         self._poll_thread: threading.Thread | None = None
 
     def start(self) -> None:
@@ -77,6 +86,7 @@ class MusicHub(ControlSurface):
         while self.running:
             try:
                 self._paint_tempo()
+                self._paint_transport()
                 self._paint_instruments()
             except Exception:
                 pass
@@ -98,34 +108,90 @@ class MusicHub(ControlSurface):
             ("● LINK" if synced else "solo", 9, "#4ade80" if synced else "#6b7280"),
         ]))
 
+    def _paint_transport(self) -> None:
+        live = any_playing() if VOICES else False
+        self.set_key(KEY_PLAY_ALL, deck_ui.btn("#16a34a" if live else "#14532d",
+                                               [("▶", 28, "#fff"), ("ALL", 12, "#bbf7d0")]))
+        self.set_key(KEY_STOP_ALL, deck_ui.btn("#374151", [("■", 26, "#fff"), ("ALL", 12, "#d1d5db")]))
+
     def _paint_instruments(self) -> None:
         for key, label, sub, color, _factory, voice in self.items:
             playing = bool(voice) and voice in VOICES and VOICES[voice].running
             bg = color if playing else "#1f2937"
-            sub2 = ("▶ live" if playing else sub)
             self.set_key(key, deck_ui.btn(bg, [
                 (label, 14, "#ffffff"),
-                (sub2, 11, "#d1fae5" if playing else "#9ca3af"),
+                ("▶ live" if playing else sub, 11, "#d1fae5" if playing else "#9ca3af"),
             ]))
+
+    def _paint_presets(self) -> None:
+        n = len(self.presets)
+        name = self.presets[self.sel] if n else "—"
+        self.set_key(KEY_SAVE, deck_ui.btn("#15803d", [("SAVE", 14, "#fff"), ("snapshot", 9, "#bbf7d0")]))
+        self.set_key(KEY_PREV, deck_ui.btn("#1e293b" if n else "#0b0f1a", [("◀", 24, "#94a3b8" if n else "#334155")]))
+        self.set_key(KEY_NAME, deck_ui.btn("#0f172a", [
+            ("PRESET", 10, "#94a3b8"),
+            (name, 14, "#a78bfa" if n else "#475569"),
+            (f"{self.sel + 1}/{n} · load" if n else "save first", 9, "#64748b"),
+        ]))
+        self.set_key(KEY_NEXT, deck_ui.btn("#1e293b" if n else "#0b0f1a", [("▶", 24, "#94a3b8" if n else "#334155")]))
+        self.set_key(KEY_DEL, deck_ui.btn("#7f1d1d" if n else "#0b0f1a",
+                                          [("DEL", 14, "#fecaca" if n else "#475569"), ("preset", 9, "#f87171" if n else "#334155")]))
 
     def render(self) -> None:
         if not self.running:
             return
-        # Blank the whole deck, then paint header + instruments.
         for k in range(32):
             self.set_key(k, deck_ui.btn("#0b0f1a", []))
         self.set_key(1, deck_ui.btn("#111827", [("MUSIC", 13, "#a78bfa"), ("hub", 10, "#6b7280")]))
         self._paint_tempo()
+        self._paint_transport()
         self._paint_instruments()
+        self._paint_presets()
         self.render_home_key()
 
     # -- input ---------------------------------------------------------
+
+    def _refresh(self) -> None:
+        self.presets = list_presets()
+        self.sel = min(self.sel, max(0, len(self.presets) - 1))
 
     def on_key(self, _deck, key: int, pressed: bool) -> None:
         if not pressed:
             return
         if key == KEY_HOME:
             self.on_home()
+            return
+        if key == KEY_PLAY_ALL:
+            start_all()
+            self.render()
+            return
+        if key == KEY_STOP_ALL:
+            stop_all()
+            self.render()
+            return
+        if key == KEY_SAVE:
+            name = save_preset()
+            self._refresh()
+            if name in self.presets:
+                self.sel = self.presets.index(name)
+            self.render()
+            return
+        if key == KEY_PREV and self.presets:
+            self.sel = (self.sel - 1) % len(self.presets)
+            self._paint_presets()
+            return
+        if key == KEY_NEXT and self.presets:
+            self.sel = (self.sel + 1) % len(self.presets)
+            self._paint_presets()
+            return
+        if key == KEY_NAME and self.presets:
+            load_preset(self.presets[self.sel])
+            self.render()
+            return
+        if key == KEY_DEL and self.presets:
+            delete_preset(self.presets[self.sel])
+            self._refresh()
+            self.render()
             return
         for k, _label, _sub, _color, factory, _voice in self.items:
             if key == k and factory is not None and self.goto is not None:

@@ -12,10 +12,13 @@ between pages — only the control surface comes and goes.
 
 from __future__ import annotations
 
+import json
 import os
 import random
 import sys
 import threading
+import time
+from datetime import datetime
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
@@ -235,6 +238,26 @@ class GenEngine:
                 "gate": self.gate, "fill": self.fill,
             }
 
+    # -- save / restore ------------------------------------------------
+
+    def get_state(self) -> dict:
+        with self.lock:
+            return {"steps": self.steps, "pulses": self.pulses, "root": self.root,
+                    "gate": self.gate, "mode_idx": self.mode_idx,
+                    "scale_idx": self.scale_idx, "pattern": list(self._pattern)}
+
+    def set_state(self, s: dict) -> None:
+        with self.lock:
+            self.steps = int(s.get("steps", self.steps))
+            self.pulses = int(s.get("pulses", self.pulses))
+            self.root = int(s.get("root", self.root))
+            self.gate = float(s.get("gate", self.gate))
+            self.mode_idx = int(s.get("mode_idx", self.mode_idx)) % len(MODES)
+            self.scale_idx = int(s.get("scale_idx", self.scale_idx)) % len(SCALES)
+            pat = s.get("pattern")
+            if isinstance(pat, list):
+                self._pattern = [float(x) for x in pat]
+
     # -- note choice ---------------------------------------------------
 
     def _notes_for_hit(self, hit: int) -> list[int]:
@@ -394,5 +417,106 @@ VOICES["B"].mode_idx = MODES.index("FLAT")          # bass = steady root by defa
 VOICE_KEYS = ["A", "B", "C"]
 engine = VOICES["A"]  # back-compat default
 
+
 def any_playing() -> bool:
     return any(v.running for v in VOICES.values())
+
+
+def start_all() -> None:
+    for v in VOICES.values():
+        v.start()
+
+
+def stop_all() -> None:
+    for v in VOICES.values():
+        v.stop()
+
+
+# ── Presets / snapshots + last-state restore ─────────────────────────
+
+_GEN_DIR = os.path.expanduser("~/.streamdeck-gen")
+_PRESET_DIR = os.path.join(_GEN_DIR, "presets")
+_LAST_FILE = os.path.join(_GEN_DIR, "last.json")
+_NAME_WORDS = ["nova", "luna", "flux", "drift", "pulse", "echo", "comet",
+               "ember", "haze", "orbit", "prism", "quartz", "raven", "tide", "void"]
+
+
+def _capture_all() -> dict:
+    return {k: v.get_state() for k, v in VOICES.items()}
+
+
+def _apply_all(data: dict) -> None:
+    for k, st in (data or {}).items():
+        if k in VOICES and isinstance(st, dict):
+            VOICES[k].set_state(st)
+
+
+def save_preset(name: str | None = None) -> str:
+    """Snapshot all voices to a named preset (auto-named by word + date)."""
+    try:
+        os.makedirs(_PRESET_DIR, exist_ok=True)
+    except Exception:
+        pass
+    if not name:
+        name = f"{random.choice(_NAME_WORDS)}-{datetime.now():%m%d-%H%M%S}"
+    try:
+        with open(os.path.join(_PRESET_DIR, name + ".json"), "w") as f:
+            json.dump(_capture_all(), f)
+    except Exception:
+        pass
+    return name
+
+
+def list_presets() -> list[str]:
+    try:
+        return sorted(f[:-5] for f in os.listdir(_PRESET_DIR) if f.endswith(".json"))
+    except Exception:
+        return []
+
+
+def load_preset(name: str) -> bool:
+    try:
+        with open(os.path.join(_PRESET_DIR, name + ".json")) as f:
+            _apply_all(json.load(f))
+        return True
+    except Exception:
+        return False
+
+
+def delete_preset(name: str) -> bool:
+    try:
+        os.remove(os.path.join(_PRESET_DIR, name + ".json"))
+        return True
+    except Exception:
+        return False
+
+
+def save_last() -> None:
+    try:
+        os.makedirs(_GEN_DIR, exist_ok=True)
+        with open(_LAST_FILE, "w") as f:
+            json.dump(_capture_all(), f)
+    except Exception:
+        pass
+
+
+def _load_last() -> None:
+    try:
+        with open(_LAST_FILE) as f:
+            _apply_all(json.load(f))
+    except Exception:
+        pass
+
+
+# Restore the last session's patterns on startup (voices stay stopped —
+# the user presses play), and keep autosaving it so a crash loses nothing.
+_load_last()
+
+
+def _autosave_loop() -> None:
+    while True:
+        time.sleep(8)
+        save_last()
+
+
+threading.Thread(target=_autosave_loop, daemon=True, name="gen-autosave").start()
