@@ -46,7 +46,7 @@ NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 #   RND/WALK     — randomised (RND = jump, WALK = drifting random walk)
 #   FLAT         — steady root note (kick / one-note bass)
 #   CHORD        — triad stab on every hit
-MODES = ["UP", "DOWN", "ARP", "RND", "WALK", "FLAT", "CHORD"]
+MODES = ["UP", "DOWN", "ARP", "RND", "WALK", "FLAT", "CHORD", "MARK"]
 
 SCALES = [
     ("penta-", [0, 3, 5, 7, 10]),
@@ -133,6 +133,7 @@ class GenEngine:
         self._hit = 0
         self._fired = False     # did the current step actually trigger a note
         self._walk = 4          # WALK-mode degree position
+        self._mk = 4            # MARK-mode (Markov) degree position
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._midi = None
@@ -315,6 +316,31 @@ class GenEngine:
             return [at(seq[hit % len(seq)], (hit // len(seq)) % 2)]
         if mode == "RND":
             return [at(random.randrange(n), random.randrange(3))]
+        if mode == "MARK":
+            # First-order Markov walk over scale degrees across 3 octaves.
+            # Next note depends only on the current one: small steps are likely,
+            # leaps rare, with a pull toward stable degrees (tonic/3rd/5th) and
+            # the mid register — so the line wanders but keeps resolving.
+            span = n * 3
+            cur = max(0, min(span - 1, self._mk))
+            centre = span // 2
+            picks, weights = [], []
+            for d, w in ((-3, 1), (-2, 2), (-1, 6), (0, 2), (1, 6), (2, 2), (3, 1)):
+                nxt = cur + d
+                if not (0 <= nxt < span):
+                    continue
+                wt = w
+                if (nxt % n) in (0, 2, 4):                 # land on stable degrees
+                    wt += 2
+                if (cur > centre and d < 0) or (cur < centre and d > 0):
+                    wt += 3                                # pull back toward centre
+                elif (cur > centre and d > 0) or (cur < centre and d < 0):
+                    wt = max(1, wt - 1)                    # resist drifting away
+                picks.append(nxt)
+                weights.append(wt)
+            self._mk = random.choices(picks, weights=weights)[0] if picks else cur
+            # -1 octave offset so the centre of the span sits in the root octave
+            return [self.root + scale[self._mk % n] + 12 * (self._mk // n - 1)]
         return [at(hit % n, (hit // n) % 3)]  # UP
 
     # -- transport -----------------------------------------------------
