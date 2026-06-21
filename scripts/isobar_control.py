@@ -64,9 +64,19 @@ class IsobarControl(ControlSurface):
                 snap = self.eng.snapshot()
                 if snap["running"]:
                     self._paint_grid(snap)
+                self.set_key(KEY_PLAY, self._play_img(snap))
             except Exception:
                 pass
             time.sleep(frame)
+
+    def _play_img(self, snap: dict):
+        if snap.get("pending"):
+            blink = int(time.monotonic() * 2) % 2
+            return deck_ui.btn("#a16207" if blink else "#3f2d06",
+                               [("▶", 28, "#fde68a"), (f"GEN {self.eng.name} ·q", 11, "#fde68a")])
+        if snap.get("armed"):
+            return deck_ui.btn("#16a34a", [("■", 28, "#fff"), (f"GEN {self.eng.name}", 12, "#d1fae5")])
+        return deck_ui.btn("#374151", [("▶", 28, "#fff"), (f"GEN {self.eng.name}", 12, "#d1d5db")])
 
     # -- rendering -----------------------------------------------------
 
@@ -121,10 +131,7 @@ class IsobarControl(ControlSurface):
         self.set_key(KEY_ALGO, deck_ui.btn("#3730a3", [("ALGO", 11, "#c7d2fe"), (snap["mode"], 18, "#fff")]))
         self.set_key(KEY_SCALE, deck_ui.btn("#5b21b6", [("SCALE", 10, "#ddd6fe"), (snap["scale"], 18, "#fff")]))
 
-        playing = snap["running"]
-        self.set_key(KEY_PLAY, deck_ui.btn("#16a34a" if playing else "#374151",
-                                           [("▶" if not playing else "■", 28, "#fff"),
-                                            (f"GEN {self.eng.name}", 12, "#d1fae5" if playing else "#d1d5db")]))
+        self.set_key(KEY_PLAY, self._play_img(snap))
         nn = note_name(snap["root"])
         self.set_key(KEY_ROOT_DN, deck_ui.btn("#1e293b", [("ROOT −", 11, "#94a3b8"), (nn, 22, "#a78bfa")]))
         self.set_key(KEY_ROOT_UP, deck_ui.btn("#1e293b", [("ROOT +", 11, "#94a3b8"), (nn, 22, "#a78bfa")]))

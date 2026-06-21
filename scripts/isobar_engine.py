@@ -77,13 +77,46 @@ def _euclid(pulses: int, steps: int) -> list[int]:
             for i in range(steps)]
 
 
+# Shared resources — one Link session + one MIDI port for ALL voices, so
+# six generators don't spin up six Link instances / six IAC connections.
+_shared_link = None
+_shared_midi = None
+_res_lock = threading.Lock()
+
+
+def _get_link():
+    global _shared_link
+    with _res_lock:
+        if _shared_link is None and _link is not None:
+            try:
+                _shared_link = _link.Link(120.0)
+                _shared_link.enabled = True
+            except Exception:
+                _shared_link = None
+    return _shared_link
+
+
+def _get_midi():
+    global _shared_midi
+    with _res_lock:
+        if _shared_midi is None and MidiOut is not None:
+            try:
+                _shared_midi = MidiOut(port_name="StreamDeck Gen",
+                                       iac_prefer=["IAC Driver Bus 2", "IAC Driver"])
+            except Exception:
+                _shared_midi = None
+    return _shared_midi
+
+
 class GenEngine:
     """One voice — per-step probability grid, Link-clocked, played over MIDI."""
 
     def __init__(self, channel: int = 0, name: str = "A", root: int = 48):
         self.lock = threading.Lock()
         self.name = name
-        self.running = False
+        self.running = False    # clock thread alive (queued or playing)
+        self.armed = False      # actually firing notes (sounding)
+        self.pending = None     # "start" | "stop" — Link-quantised launch
         self.tempo = 120.0
         self.peers = 0
         self.steps = 8
@@ -108,23 +141,15 @@ class GenEngine:
     # -- resources (lazy) ----------------------------------------------
 
     def _ensure_midi(self):
-        if self._midi is None and MidiOut is not None:
-            try:
-                # Notes → IAC Bus 2 (Live: Track on); Looper control is on
-                # Bus 1, so generator notes and control don't collide.
-                self._midi = MidiOut(port_name="StreamDeck Gen",
-                                     iac_prefer=["IAC Driver Bus 2", "IAC Driver"])
-            except Exception:
-                self._midi = None
+        # Shared port → IAC Bus 2 (Live: Track on); each voice sends on its
+        # own channel. Looper control is on Bus 1, so they never collide.
+        if self._midi is None:
+            self._midi = _get_midi()
         return self._midi
 
     def _ensure_link(self):
-        if self._link is None and _link is not None:
-            try:
-                self._link = _link.Link(self.tempo)
-                self._link.enabled = True
-            except Exception:
-                self._link = None
+        if self._link is None:
+            self._link = _get_link()
         return self._link
 
     def midi_kind(self) -> str:
@@ -231,7 +256,8 @@ class GenEngine:
     def snapshot(self) -> dict:
         with self.lock:
             return {
-                "running": self.running, "tempo": self.tempo, "peers": self.peers,
+                "running": self.running, "armed": self.armed, "pending": self.pending,
+                "tempo": self.tempo, "peers": self.peers,
                 "steps": self.steps, "pulses": self.pulses, "root": self.root,
                 "step": self._step, "pattern": list(self._pattern), "fired": self._fired,
                 "mode": MODES[self.mode_idx], "scale": SCALES[self.scale_idx][0],
@@ -295,20 +321,23 @@ class GenEngine:
         self._ensure_midi()
         self._ensure_link()
         self.running = True
+        self.armed = False
+        self.pending = "start"     # arms on the next bar (Link-quantised)
         self._stop.clear()
         self._hit = 0
         self._thread = threading.Thread(target=self._run, daemon=True, name="gen-engine")
         self._thread.start()
 
     def stop(self) -> None:
-        self.running = False
-        self._stop.set()
-        m = self._midi
-        if m is not None:
-            try:
-                m.all_notes_off(self.channel)
-            except Exception:
-                pass
+        if not self.running:
+            return
+        with self.lock:
+            armed = self.armed
+        if armed:
+            with self.lock:
+                self.pending = "stop"   # finish the bar, stop on the boundary
+        else:
+            self._stop.set()            # queued but not sounding yet — cancel now
 
     def _on(self, note: int) -> None:
         if self._midi:
@@ -332,14 +361,16 @@ class GenEngine:
     # -- clock thread (Link phase-locked) ------------------------------
 
     def _run(self) -> None:
-        link = self._link
+        link = self._ensure_link()
         if link is None:
             self._run_freewheel()
             return
         clock = link.clock()
+        qb = int(QUANTUM * 4)   # sixteenths per bar (launch quantum)
         last16 = None
         held: tuple[list[int], int] | None = None  # (notes, off_micros)
-        while not self._stop.is_set():
+        ending = False
+        while not self._stop.is_set() and not ending:
             now = clock.micros()
             state = link.captureSessionState()
             tempo = state.tempo()
@@ -353,38 +384,67 @@ class GenEngine:
                 held = None
             if sixteenth != last16:
                 last16 = sixteenth
+                bar = (sixteenth % qb == 0)   # downbeat → arm / disarm here
                 with self.lock:
+                    if bar and self.pending == "start":
+                        self.pending = None
+                        self.armed = True
+                        self._hit = 0
+                    elif bar and self.pending == "stop":
+                        self.pending = None
+                        self.armed = False
+                        ending = True
+                    armed = self.armed
                     idx = sixteenth % self.steps
                     prob = self._pattern[idx] if idx < len(self._pattern) else 0.0
                     self._step = idx
                     gate = self.gate
-                fires = self._fires(prob)
-                with self.lock:
-                    self._fired = fires
-                if fires:
-                    notes = self._notes_for_hit(self._hit)
-                    if held is not None:
-                        for nt in held[0]:
-                            self._off(nt)
-                    for nt in notes:
-                        self._on(nt)
-                    if gate >= 1.0:
-                        held = (notes, now + 3_600_000_000)  # HOLD: legato, off'd by the next note
-                    else:
-                        dur_us = int(60.0 / max(tempo, 1.0) / 4.0 * gate * 1_000_000)
-                        held = (notes, now + dur_us)
+                if not ending and armed:
+                    fires = self._fires(prob)
                     with self.lock:
-                        self._hit += 1
+                        self._fired = fires
+                    if fires:
+                        notes = self._notes_for_hit(self._hit)
+                        if held is not None:
+                            for nt in held[0]:
+                                self._off(nt)
+                        for nt in notes:
+                            self._on(nt)
+                        if gate >= 1.0:
+                            held = (notes, now + 3_600_000_000)  # HOLD: legato
+                        else:
+                            dur_us = int(60.0 / max(tempo, 1.0) / 4.0 * gate * 1_000_000)
+                            held = (notes, now + dur_us)
+                        with self.lock:
+                            self._hit += 1
+                else:
+                    with self.lock:
+                        self._fired = False
             self._stop.wait(0.005)
         if held is not None:
             for nt in held[0]:
                 self._off(nt)
+        with self.lock:
+            self.running = False
+            self.armed = False
+            self.pending = None
+        if self._midi is not None:
+            try:
+                self._midi.all_notes_off(self.channel)
+            except Exception:
+                pass
 
     def _run_freewheel(self) -> None:
-        """Fallback clock if Ableton Link is unavailable (no tempo sync)."""
+        """Fallback clock if Ableton Link is unavailable (no tempo sync, no
+        bar quantisation — arms immediately, stops on the next step)."""
+        with self.lock:
+            self.armed = True
+            self.pending = None
         step = 0
         while not self._stop.is_set():
             with self.lock:
+                if self.pending == "stop":
+                    break
                 step_sec = 60.0 / max(self.tempo, 1.0) / 4.0
                 idx = step % self.steps
                 prob = self._pattern[idx] if idx < len(self._pattern) else 0.0
@@ -404,6 +464,15 @@ class GenEngine:
                 self._off(nt)
             self._stop.wait(step_sec * (1.0 - gate))
             step += 1
+        with self.lock:
+            self.running = False
+            self.armed = False
+            self.pending = None
+        if self._midi is not None:
+            try:
+                self._midi.all_notes_off(self.channel)
+            except Exception:
+                pass
 
 
 # Voices — independent generators, each on its own MIDI channel, all
@@ -411,10 +480,16 @@ class GenEngine:
 VOICES = {
     "A": GenEngine(channel=0, name="A", root=48),   # melody
     "B": GenEngine(channel=1, name="B", root=36),   # bass
-    "C": GenEngine(channel=2, name="C", root=60),   # high / perc
+    "C": GenEngine(channel=2, name="C", root=60),   # high
+    "D": GenEngine(channel=3, name="D", root=48),   # chord
+    "E": GenEngine(channel=4, name="E", root=48),   # walk
+    "F": GenEngine(channel=5, name="F", root=55),   # arp
 }
-VOICES["B"].mode_idx = MODES.index("FLAT")          # bass = steady root by default
-VOICE_KEYS = ["A", "B", "C"]
+VOICES["B"].mode_idx = MODES.index("FLAT")          # bass = steady root
+VOICES["D"].mode_idx = MODES.index("CHORD")
+VOICES["E"].mode_idx = MODES.index("WALK")
+VOICES["F"].mode_idx = MODES.index("ARP")
+VOICE_KEYS = ["A", "B", "C", "D", "E", "F"]
 engine = VOICES["A"]  # back-compat default
 
 
@@ -430,6 +505,54 @@ def start_all() -> None:
 def stop_all() -> None:
     for v in VOICES.values():
         v.stop()
+
+
+# ── Tempo control via Link (tap-tempo + ×2 / ÷2) ─────────────────────
+
+_tap_times: list[float] = []
+
+
+def set_link_tempo(bpm: float) -> None:
+    link = _get_link()
+    if link is None:
+        return
+    try:
+        bpm = max(20.0, min(300.0, float(bpm)))
+        state = link.captureSessionState()
+        state.setTempo(bpm, link.clock().micros())
+        link.commitSessionState(state)
+    except Exception:
+        pass
+
+
+def tap_tempo() -> float | None:
+    """Register a tap and set the Link tempo from recent tap intervals.
+    Keep tapping to home in (sliding window of 8); a >2s gap starts fresh."""
+    global _tap_times
+    now = time.monotonic()
+    if _tap_times and now - _tap_times[-1] > 2.0:
+        _tap_times = []
+    _tap_times.append(now)
+    _tap_times = _tap_times[-8:]
+    if len(_tap_times) >= 2:
+        gaps = [_tap_times[i + 1] - _tap_times[i] for i in range(len(_tap_times) - 1)]
+        avg = sum(gaps) / len(gaps)
+        if avg > 0:
+            bpm = max(20.0, min(300.0, 60.0 / avg))
+            set_link_tempo(bpm)
+            return bpm
+    return None
+
+
+def mult_tempo(factor: float) -> None:
+    """Multiply the current Link tempo (×2 / ÷2 buttons)."""
+    link = _get_link()
+    if link is None:
+        return
+    try:
+        set_link_tempo(link.captureSessionState().tempo() * factor)
+    except Exception:
+        pass
 
 
 # ── Presets / snapshots + last-state restore ─────────────────────────

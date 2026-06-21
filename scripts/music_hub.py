@@ -29,7 +29,8 @@ except Exception:  # pragma: no cover
 try:
     import isobar_control
     from isobar_engine import (VOICES, start_all, stop_all, any_playing,
-                               save_preset, list_presets, load_preset, delete_preset)
+                               save_preset, list_presets, load_preset, delete_preset,
+                               tap_tempo, mult_tempo)
 except Exception:  # pragma: no cover
     isobar_control = None
     VOICES = {}
@@ -51,12 +52,18 @@ def _instruments():
         items.append((10, "GEN A", "melody", "#3b82f6", _gen_factory("A"), "A"))
         items.append((11, "GEN B", "bass", "#8b5cf6", _gen_factory("B"), "B"))
         items.append((12, "GEN C", "high", "#ec4899", _gen_factory("C"), "C"))
+        items.append((13, "GEN D", "chord", "#14b8a6", _gen_factory("D"), "D"))
+        items.append((14, "GEN E", "walk", "#f97316", _gen_factory("E"), "E"))
+        items.append((15, "GEN F", "arp", "#eab308", _gen_factory("F"), "F"))
     return items
 
 
 KEY_TEMPO = 0
 KEY_PLAY_ALL = 2
 KEY_STOP_ALL = 3
+KEY_TAP = 4
+KEY_MUL2 = 5
+KEY_DIV2 = 6
 KEY_SAVE = 24
 KEY_PREV = 25
 KEY_NAME = 26      # tap = load selected preset
@@ -109,19 +116,33 @@ class MusicHub(ControlSurface):
         ]))
 
     def _paint_transport(self) -> None:
-        live = any_playing() if VOICES else False
-        self.set_key(KEY_PLAY_ALL, deck_ui.btn("#16a34a" if live else "#14532d",
-                                               [("▶", 28, "#fff"), ("ALL", 12, "#bbf7d0")]))
-        self.set_key(KEY_STOP_ALL, deck_ui.btn("#374151", [("■", 26, "#fff"), ("ALL", 12, "#d1d5db")]))
+        armed = any(v.armed for v in VOICES.values()) if VOICES else False
+        pending = any(v.pending for v in VOICES.values()) if VOICES else False
+        blink = int(time.monotonic() * 2) % 2
+        if pending and blink:
+            pbg = "#a16207"   # queued — blink amber
+        else:
+            pbg = "#16a34a" if armed else "#14532d"
+        self.set_key(KEY_PLAY_ALL, deck_ui.btn(pbg, [("▶", 26, "#fff"), ("ALL", 12, "#bbf7d0")]))
+        self.set_key(KEY_STOP_ALL, deck_ui.btn("#374151", [("■", 24, "#fff"), ("ALL", 12, "#d1d5db")]))
 
     def _paint_instruments(self) -> None:
+        blink = int(time.monotonic() * 2) % 2
         for key, label, sub, color, _factory, voice in self.items:
-            playing = bool(voice) and voice in VOICES and VOICES[voice].running
-            bg = color if playing else "#1f2937"
-            self.set_key(key, deck_ui.btn(bg, [
-                (label, 14, "#ffffff"),
-                ("▶ live" if playing else sub, 11, "#d1fae5" if playing else "#9ca3af"),
-            ]))
+            v = VOICES.get(voice) if voice else None
+            if v is not None and v.pending:
+                bg = "#a16207" if blink else "#3f2d06"   # queued
+                st, col = ("→ start" if v.pending == "start" else "→ stop"), "#fde68a"
+            elif v is not None and v.armed:
+                bg, st, col = color, "▶ live", "#d1fae5"
+            else:
+                bg, st, col = "#1f2937", sub, "#9ca3af"
+            self.set_key(key, deck_ui.btn(bg, [(label, 14, "#ffffff"), (st, 11, col)]))
+
+    def _paint_tempo_ctl(self) -> None:
+        self.set_key(KEY_TAP, deck_ui.btn("#0e7490", [("TAP", 17, "#fff"), ("tempo", 9, "#a5f3fc")]))
+        self.set_key(KEY_MUL2, deck_ui.btn("#1e293b", [("×2", 22, "#fff"), ("bpm", 9, "#94a3b8")]))
+        self.set_key(KEY_DIV2, deck_ui.btn("#1e293b", [("÷2", 22, "#fff"), ("bpm", 9, "#94a3b8")]))
 
     def _paint_presets(self) -> None:
         n = len(self.presets)
@@ -144,6 +165,7 @@ class MusicHub(ControlSurface):
             self.set_key(k, deck_ui.btn("#0b0f1a", []))
         self.set_key(1, deck_ui.btn("#111827", [("MUSIC", 13, "#a78bfa"), ("hub", 10, "#6b7280")]))
         self._paint_tempo()
+        self._paint_tempo_ctl()
         self._paint_transport()
         self._paint_instruments()
         self._paint_presets()
@@ -168,6 +190,18 @@ class MusicHub(ControlSurface):
         if key == KEY_STOP_ALL:
             stop_all()
             self.render()
+            return
+        if key == KEY_TAP:
+            tap_tempo()
+            self._paint_tempo()
+            return
+        if key == KEY_MUL2:
+            mult_tempo(2.0)
+            self._paint_tempo()
+            return
+        if key == KEY_DIV2:
+            mult_tempo(0.5)
+            self._paint_tempo()
             return
         if key == KEY_SAVE:
             name = save_preset()
