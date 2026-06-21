@@ -29,6 +29,7 @@ KEY_BEAT = 27      # cycle a built-in groove
 KEY_SRC = 28       # link the active lane to a GEN voice's rhythm
 KEY_HOME = ControlSurface.HOME_KEY  # 31
 FPS = 14.0
+LONG_PRESS = 0.35   # seconds held to count as a long press (ratchet)
 
 # (group label, [lane indices, in cycle order], colour). Covers all 16 lanes.
 GROUPS = [
@@ -51,6 +52,7 @@ class DrumControl(ControlSurface):
         self.lane_sel = [0] * len(GROUPS)   # selected lane within each group
         self.beat_idx = 0
         self._poll_thread: threading.Thread | None = None
+        self._press_t: dict[int, float] = {}
 
     def start(self) -> None:
         self.running = True
@@ -199,7 +201,26 @@ class DrumControl(ControlSurface):
 
     # -- input ---------------------------------------------------------
 
+    def _step_gesture(self, key: int, pressed: bool) -> None:
+        """Short tap = on/off; long press = ratchet ×2/×3."""
+        lane = self.active_lane()
+        if machine.snapshot()["source"][lane] is not None:   # GEN-driven lane is read-only
+            return
+        step = key - STEP_ROW.start
+        if pressed:
+            self._press_t[key] = time.monotonic()
+            return
+        dt = time.monotonic() - self._press_t.pop(key, time.monotonic())
+        if dt >= LONG_PRESS:
+            machine.hold_step(lane, step)
+        else:
+            machine.tap_step(lane, step)
+        self.render()
+
     def on_key(self, _deck, key: int, pressed: bool) -> None:
+        if key in STEP_ROW:               # press+release handled (long-press detect)
+            self._step_gesture(key, pressed)
+            return
         if not pressed:
             return
         if key == KEY_HOME:
@@ -210,11 +231,6 @@ class DrumControl(ControlSurface):
             else:
                 self.group = key
             self.render()
-        elif key in STEP_ROW:
-            lane = self.active_lane()
-            if machine.snapshot()["source"][lane] is None:   # GEN-driven lanes are read-only
-                machine.toggle_step(lane, key - STEP_ROW.start)
-                self.render()
         elif key == KEY_PLAY:
             machine.toggle()
             self.render()

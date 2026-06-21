@@ -185,29 +185,34 @@ class GenEngine:
             self.pulses = max(0, min(self.steps, k))
             self._pattern = [float(v) for v in _euclid(self.pulses, self.steps)]
 
-    def toggle_step(self, i: int) -> None:
-        """Tap a cell: cycle off → hit → ghost(50%) → roll×2 → roll×3 → off.
+    def tap_step(self, i: int) -> None:
+        """Short tap — plain on/off, so you can place and clear hits fast
+        without cycling through ghost/ratchet states."""
+        with self.lock:
+            if not (0 <= i < len(self._pattern)):
+                return
+            self._pattern[i] = 0.0 if self._pattern[i] > 0 else 1.0
+            self._ratchet.pop(i, None)
 
-        The two roll states are ratchets — the step retriggers 2 or 3 times
-        within its 16th (a sub-hit burst / drum roll)."""
+    def hold_step(self, i: int) -> None:
+        """Long press — dial up intensity on the cell (never turns it off):
+        hit → ghost(50%) → roll×2 → roll×3 → hit. The roll states are ratchets
+        (the step retriggers 2/3 times within its 16th)."""
         with self.lock:
             if not (0 <= i < len(self._pattern)):
                 return
             p = self._pattern[i]
             r = self._ratchet.get(i, 1)
-            if p <= 0:                       # off → hit
-                self._pattern[i] = 1.0
-                self._ratchet.pop(i, None)
-            elif p >= 1.0 and r == 1:        # hit → ghost
+            if p <= 0 or (p >= 1.0 and r == 1):   # off/hit → ghost
                 self._pattern[i] = 0.5
                 self._ratchet.pop(i, None)
-            elif 0 < p < 1.0:                # ghost → roll×2
+            elif 0 < p < 1.0:                      # ghost → roll×2
                 self._pattern[i] = 1.0
                 self._ratchet[i] = 2
-            elif r == 2:                     # roll×2 → roll×3
+            elif r == 2:                           # roll×2 → roll×3
                 self._ratchet[i] = 3
-            else:                            # roll×3 → off
-                self._pattern[i] = 0.0
+            else:                                  # roll×3 → hit
+                self._pattern[i] = 1.0
                 self._ratchet.pop(i, None)
 
     def randomize(self) -> None:

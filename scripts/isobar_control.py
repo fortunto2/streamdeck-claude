@@ -35,6 +35,7 @@ KEY_CLEAR = 30
 KEY_HOME = ControlSurface.HOME_KEY  # 31
 
 FPS = 14.0
+LONG_PRESS = 0.35   # seconds held to count as a long press (ratchet/ghost)
 GATE_LABEL = {0.25: "short", 0.5: "med", 0.9: "long", 1.0: "HOLD"}
 
 
@@ -44,6 +45,7 @@ class IsobarControl(ControlSurface):
         super().__init__(deck, on_home)
         self.eng = VOICES.get(voice, VOICES["A"])
         self._poll_thread: threading.Thread | None = None
+        self._press_t: dict[int, float] = {}
 
     def start(self) -> None:
         self.running = True
@@ -154,10 +156,27 @@ class IsobarControl(ControlSurface):
 
     # -- input ---------------------------------------------------------
 
+    def _grid_gesture(self, key: int, pressed: bool) -> None:
+        """Short tap = on/off; long press = ghost/ratchet ladder."""
+        if key >= self.eng.snapshot()["steps"]:
+            return
+        if pressed:
+            self._press_t[key] = time.monotonic()
+            return
+        dt = time.monotonic() - self._press_t.pop(key, time.monotonic())
+        if dt >= LONG_PRESS:
+            self.eng.hold_step(key)
+        else:
+            self.eng.tap_step(key)
+        self.render()
+
     def on_key(self, _deck, key: int, pressed: bool) -> None:
         if key == KEY_FILL:           # momentary — fires on press, off on release
             self.eng.set_fill(pressed)
             self.render()
+            return
+        if key in GRID:               # press+release handled (long-press detect)
+            self._grid_gesture(key, pressed)
             return
         if not pressed:
             return
@@ -166,10 +185,7 @@ class IsobarControl(ControlSurface):
             return
         e = self.eng
         snap = e.snapshot()
-        if key in GRID:
-            if key < snap["steps"]:
-                e.toggle_step(key)
-        elif key == KEY_PLAY:
+        if key == KEY_PLAY:
             e.toggle()
         elif key == KEY_STEPS_DN:
             e.set_steps(snap["steps"] - 1)

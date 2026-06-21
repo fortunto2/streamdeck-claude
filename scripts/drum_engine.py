@@ -99,23 +99,30 @@ class DrumMachine:
 
     # -- pattern -------------------------------------------------------
 
-    def toggle_step(self, voice: int, step: int) -> None:
-        """Tap a step: cycle off → hit → roll×2 → roll×3 → off. The roll
-        states are ratchets — the lane retriggers 2/3 times within the 16th."""
+    def tap_step(self, voice: int, step: int) -> None:
+        """Short tap — plain on/off, so hits can be placed and cleared fast."""
+        with self.lock:
+            if not (0 <= voice < len(DRUMS) and 0 <= step < N_STEPS):
+                return
+            self.patterns[voice][step] = 0 if self.patterns[voice][step] else 1
+            self.ratchet.pop((voice, step), None)
+
+    def hold_step(self, voice: int, step: int) -> None:
+        """Long press — dial up the ratchet (never turns it off):
+        hit → roll×2 → roll×3 → hit. Long-pressing an empty step makes a ×2 roll."""
         with self.lock:
             if not (0 <= voice < len(DRUMS) and 0 <= step < N_STEPS):
                 return
             key = (voice, step)
             r = self.ratchet.get(key, 1)
-            if not self.patterns[voice][step]:      # off → hit
+            if not self.patterns[voice][step]:      # off → roll×2
                 self.patterns[voice][step] = 1
-                self.ratchet.pop(key, None)
+                self.ratchet[key] = 2
             elif r == 1:                            # hit → roll×2
                 self.ratchet[key] = 2
             elif r == 2:                            # roll×2 → roll×3
                 self.ratchet[key] = 3
-            else:                                   # roll×3 → off
-                self.patterns[voice][step] = 0
+            else:                                   # roll×3 → hit
                 self.ratchet.pop(key, None)
 
     def clear_voice(self, voice: int) -> None:
