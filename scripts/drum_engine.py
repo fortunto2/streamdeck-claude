@@ -137,6 +137,26 @@ class DrumMachine:
                     "step": self._step, "patterns": [list(p) for p in self.patterns],
                     "source": list(self.source)}
 
+    # -- save / restore (patterns + per-lane GEN source) ---------------
+
+    def get_state(self) -> dict:
+        with self.lock:
+            return {"patterns": [list(p) for p in self.patterns], "source": list(self.source)}
+
+    def set_state(self, s: dict) -> None:
+        with self.lock:
+            pats = s.get("patterns")
+            if isinstance(pats, list):
+                for i in range(min(len(pats), len(self.patterns))):
+                    row = pats[i]
+                    if isinstance(row, list):
+                        r = [1 if x else 0 for x in row][:N_STEPS]
+                        self.patterns[i] = r + [0] * (N_STEPS - len(r))
+            src = s.get("source")
+            if isinstance(src, list):
+                for i in range(min(len(src), len(self.source))):
+                    self.source[i] = src[i] if src[i] in SRC_CYCLE else None
+
     # -- transport (bar-quantised, same as the voices) -----------------
 
     def toggle(self) -> None:
@@ -244,3 +264,11 @@ class DrumMachine:
 
 
 machine = DrumMachine()
+
+# Make the drum machine part of the GEN preset / crash-restore system.
+try:
+    from isobar_engine import register_extra, _load_last_extra
+    register_extra("drum", machine.get_state, machine.set_state)
+    _load_last_extra("drum")       # restore drum slice of last.json (saved after our import)
+except Exception:
+    pass

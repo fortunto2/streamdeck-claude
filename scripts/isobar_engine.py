@@ -610,14 +610,54 @@ _NAME_WORDS = ["nova", "luna", "flux", "drift", "pulse", "echo", "comet",
                "ember", "haze", "orbit", "prism", "quartz", "raven", "tide", "void"]
 
 
+# Extra state providers (e.g. the drum machine) register here so presets and
+# crash-restore cover them too — without isobar_engine importing them (which
+# would be circular; they import us). Each is (get_state, set_state).
+_EXTRA_PROVIDERS: dict[str, tuple] = {}
+
+
+def register_extra(name: str, get_fn, set_fn) -> None:
+    _EXTRA_PROVIDERS[name] = (get_fn, set_fn)
+
+
 def _capture_all() -> dict:
-    return {k: v.get_state() for k, v in VOICES.items()}
+    voices = {k: v.get_state() for k, v in VOICES.items()}
+    extras = {}
+    for name, (get_fn, _set) in _EXTRA_PROVIDERS.items():
+        try:
+            extras[name] = get_fn()
+        except Exception:
+            pass
+    return {"voices": voices, "extras": extras}
 
 
 def _apply_all(data: dict) -> None:
-    for k, st in (data or {}).items():
+    if not isinstance(data, dict):
+        return
+    voices = data.get("voices", data)        # back-compat: old flat {A:{...}} format
+    for k, st in (voices or {}).items():
         if k in VOICES and isinstance(st, dict):
             VOICES[k].set_state(st)
+    for name, st in (data.get("extras") or {}).items():
+        prov = _EXTRA_PROVIDERS.get(name)
+        if prov and st is not None:
+            try:
+                prov[1](st)
+            except Exception:
+                pass
+
+
+def _load_last_extra(name: str) -> None:
+    """Restore one extra provider's slice of last.json — called after the
+    provider registers (it isn't available yet when _load_last() runs at import)."""
+    try:
+        with open(_LAST_FILE) as f:
+            st = (json.load(f).get("extras") or {}).get(name)
+        prov = _EXTRA_PROVIDERS.get(name)
+        if st is not None and prov:
+            prov[1](st)
+    except Exception:
+        pass
 
 
 def save_preset(name: str | None = None) -> str:
