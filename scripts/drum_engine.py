@@ -80,6 +80,7 @@ class DrumMachine:
         self._step = 0
         self.patterns = [[0] * N_STEPS for _ in DRUMS]
         self.source = [None] * len(DRUMS)   # per-lane: None or a GEN voice key
+        self.ratchet: dict[tuple[int, int], int] = {}   # (lane, step) -> 2/3 sub-hits
         # A simple default groove so it's immediately useful.
         for s in (0, 4, 8, 12):
             self.patterns[0][s] = 1                 # Kick (lane 0) — four on the floor
@@ -99,19 +100,35 @@ class DrumMachine:
     # -- pattern -------------------------------------------------------
 
     def toggle_step(self, voice: int, step: int) -> None:
+        """Tap a step: cycle off → hit → roll×2 → roll×3 → off. The roll
+        states are ratchets — the lane retriggers 2/3 times within the 16th."""
         with self.lock:
-            if 0 <= voice < len(DRUMS) and 0 <= step < N_STEPS:
-                self.patterns[voice][step] ^= 1
+            if not (0 <= voice < len(DRUMS) and 0 <= step < N_STEPS):
+                return
+            key = (voice, step)
+            r = self.ratchet.get(key, 1)
+            if not self.patterns[voice][step]:      # off → hit
+                self.patterns[voice][step] = 1
+                self.ratchet.pop(key, None)
+            elif r == 1:                            # hit → roll×2
+                self.ratchet[key] = 2
+            elif r == 2:                            # roll×2 → roll×3
+                self.ratchet[key] = 3
+            else:                                   # roll×3 → off
+                self.patterns[voice][step] = 0
+                self.ratchet.pop(key, None)
 
     def clear_voice(self, voice: int) -> None:
         with self.lock:
             if 0 <= voice < len(DRUMS):
                 self.patterns[voice] = [0] * N_STEPS
+                self.ratchet = {k: v for k, v in self.ratchet.items() if k[0] != voice}
 
     def clear_all(self) -> None:
         with self.lock:
             self.patterns = [[0] * N_STEPS for _ in DRUMS]
             self.source = [None] * len(DRUMS)
+            self.ratchet.clear()
 
     def cycle_source(self, lane: int) -> None:
         """Link a lane to a GEN voice's rhythm (off → A … F → off)."""
@@ -125,6 +142,7 @@ class DrumMachine:
         with self.lock:
             self.patterns = [[0] * N_STEPS for _ in DRUMS]
             self.source = [None] * len(DRUMS)
+            self.ratchet.clear()
             for lane, steps in mapping.items():
                 if 0 <= lane < len(DRUMS):
                     for s in steps:
@@ -135,13 +153,14 @@ class DrumMachine:
         with self.lock:
             return {"running": self.running, "armed": self.armed, "pending": self.pending,
                     "step": self._step, "patterns": [list(p) for p in self.patterns],
-                    "source": list(self.source)}
+                    "source": list(self.source), "ratchet": dict(self.ratchet)}
 
-    # -- save / restore (patterns + per-lane GEN source) ---------------
+    # -- save / restore (patterns + per-lane GEN source + ratchets) ----
 
     def get_state(self) -> dict:
         with self.lock:
-            return {"patterns": [list(p) for p in self.patterns], "source": list(self.source)}
+            return {"patterns": [list(p) for p in self.patterns], "source": list(self.source),
+                    "ratchet": {f"{l}_{s}": c for (l, s), c in self.ratchet.items()}}
 
     def set_state(self, s: dict) -> None:
         with self.lock:
@@ -156,6 +175,17 @@ class DrumMachine:
             if isinstance(src, list):
                 for i in range(min(len(src), len(self.source))):
                     self.source[i] = src[i] if src[i] in SRC_CYCLE else None
+            rat = s.get("ratchet")
+            if isinstance(rat, dict):
+                self.ratchet = {}
+                for k, v in rat.items():
+                    try:
+                        ls, ss = k.split("_")
+                        lane, st, cnt = int(ls), int(ss), int(v)
+                        if cnt > 1 and 0 <= lane < len(DRUMS) and 0 <= st < N_STEPS:
+                            self.ratchet[(lane, st)] = cnt
+                    except Exception:
+                        pass
 
     # -- transport (bar-quantised, same as the voices) -----------------
 
@@ -207,19 +237,24 @@ class DrumMachine:
         clock = link.clock()
         qb = int(QUANTUM * 4)
         last16 = None
-        held: list[tuple[int, int]] = []
+        sched: list[list] = []   # each: [note, on_us, off_us, started]
         ending = False
         while not self._stop.is_set() and not ending:
             now = clock.micros()
-            sixteenth = int(link.captureSessionState().beatAtTime(now, QUANTUM) * 4)
-            if held:
-                still = []
-                for note, off in held:
-                    if now >= off:
-                        self._off(note)
-                    else:
-                        still.append((note, off))
-                held = still
+            state = link.captureSessionState()
+            sixteenth = int(state.beatAtTime(now, QUANTUM) * 4)
+            tempo = state.tempo()
+            # service scheduled (sub-)hits: trigger due notes, release expired
+            still = []
+            for it in sched:
+                if not it[3] and now >= it[1]:
+                    self._on(it[0])
+                    it[3] = True
+                if it[3] and now >= it[2]:
+                    self._off(it[0])
+                    continue
+                still.append(it)
+            sched = still
             if sixteenth != last16:
                 last16 = sixteenth
                 bar = (sixteenth % qb == 0)
@@ -234,24 +269,36 @@ class DrumMachine:
                     armed = self.armed
                     step = sixteenth % N_STEPS
                     self._step = step
-                    lane_state = [(self.patterns[i][step], self.source[i]) for i in range(len(DRUMS))]
+                    lane_state = [(self.patterns[i][step], self.source[i],
+                                   self.ratchet.get((i, step), 1)) for i in range(len(DRUMS))]
                 if not ending and armed:
-                    hits = []
-                    for i, (on_local, src) in enumerate(lane_state):
-                        if src is not None:   # follow a GEN voice's rhythm, ghosts included
+                    step_us = 60.0 / max(tempo, 1.0) / 4.0 * 1_000_000
+                    for i, (on_local, src, rat) in enumerate(lane_state):
+                        note = DRUMS[i][1]
+                        if src is not None:   # follow a GEN voice's rhythm (no ratchet)
                             sv = VOICES.get(src)
                             if sv is not None:
                                 p = sv.step_prob(sixteenth)
                                 if p > 0 and (p >= 1.0 or random.random() < p):
-                                    hits.append(DRUMS[i][1])
+                                    self._on(note)
+                                    sched.append([note, now, now + 25_000, True])
                         elif on_local:
-                            hits.append(DRUMS[i][1])
-                    for note in hits:
-                        self._on(note)
-                        held.append((note, now + 25_000))   # 25 ms one-shot
+                            r = max(1, rat)
+                            if r == 1:
+                                self._on(note)
+                                sched.append([note, now, now + 25_000, True])
+                            else:         # ratchet — r retriggers across the 16th
+                                sub = step_us / r
+                                dur = int(min(25_000, sub * 0.8))
+                                for k in range(r):
+                                    on_us = now + int(k * sub)
+                                    if k == 0:
+                                        self._on(note)
+                                    sched.append([note, on_us, on_us + dur, k == 0])
             self._stop.wait(0.004)
-        for note, _ in held:
-            self._off(note)
+        for it in sched:
+            if it[3]:
+                self._off(it[0])
         with self.lock:
             self.running = False
             self.armed = False

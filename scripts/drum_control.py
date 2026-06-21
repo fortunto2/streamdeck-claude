@@ -86,7 +86,8 @@ class DrumControl(ControlSurface):
             return deck_ui.btn("#16a34a", [("■", 28, "#fff"), ("PLAY", 12, "#d1fae5")])
         return deck_ui.btn("#374151", [("▶", 28, "#fff"), ("PLAY", 12, "#d1d5db")])
 
-    def _step_img(self, on: bool, playhead: bool, color: str, beat: bool) -> Image.Image:
+    def _step_img(self, on: bool, playhead: bool, color: str, beat: bool,
+                  ratchet: int = 1) -> Image.Image:
         if playhead:
             bg, dot, r = "#052e16", ("#4ade80" if on else "#16341f"), (22 if on else 14)
         elif on:
@@ -95,7 +96,14 @@ class DrumControl(ControlSurface):
             bg, dot, r = ("#11161f" if beat else "#0b0f1a"), "#1e293b", 9
         img = Image.new("RGB", deck_ui.SIZE, bg)
         d = ImageDraw.Draw(img)
-        d.ellipse([48 - r, 48 - r, 48 + r, 48 + r], fill=dot)
+        if on and ratchet > 1:
+            rr, gap = 11, 26                         # a row of dots = sub-hits
+            x0 = 48 - (ratchet - 1) * gap / 2.0
+            for k in range(ratchet):
+                cx = int(x0 + k * gap)
+                d.ellipse([cx - rr, 48 - rr, cx + rr, 48 + rr], fill=dot)
+        else:
+            d.ellipse([48 - r, 48 - r, 48 + r, 48 + r], fill=dot)
         return img
 
     def _link_step_img(self, prob: float, playhead: bool, beat: bool) -> Image.Image:
@@ -129,8 +137,10 @@ class DrumControl(ControlSurface):
             step = snap["step"] if (snap["running"] and snap["armed"]) else -1
             color = GROUPS[self.group][2]
             row = snap["patterns"][lane]
+            ratchets = snap.get("ratchet", {})
             for i in range(N_STEPS):
-                self.set_key(STEP_ROW.start + i, self._step_img(bool(row[i]), i == step, color, i % 4 == 0))
+                rr = ratchets.get((lane, i), 1)
+                self.set_key(STEP_ROW.start + i, self._step_img(bool(row[i]), i == step, color, i % 4 == 0, rr))
 
     def _voice_img(self, g: int, snap: dict) -> Image.Image:
         _label, lanes, color = GROUPS[g]
