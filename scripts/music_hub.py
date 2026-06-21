@@ -129,7 +129,7 @@ class MusicHub(ControlSurface):
         self.set_key(KEY_TEMPO, deck_ui.btn("#0f172a", [
             ("TEMPO", 11, "#94a3b8"),
             (f"{tempo:.0f}", 26, "#fcd34d"),
-            ("● LINK" if synced else "solo", 9, "#4ade80" if synced else "#6b7280"),
+            (f"● {peers} LINK" if synced else "solo", 9, "#4ade80" if synced else "#6b7280"),
         ]))
 
     def _all_engines(self):
