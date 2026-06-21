@@ -97,7 +97,7 @@ class AbletonControl(ControlSurface):
             try:
                 # Looper control → IAC Bus 1 (Live: Remote on, Track off) so
                 # these messages map to buttons and never play notes.
-                self.midi = MidiOut(iac_prefer=["IAC Driver Bus 1", "IAC Driver"])
+                self.midi = MidiOut(iac_prefer=["sdeck Bus 1", "IAC Driver Bus 1", "Bus 1"])
             except Exception:
                 self.midi = None
         self.render()

@@ -102,7 +102,7 @@ def _get_midi():
         if _shared_midi is None and MidiOut is not None:
             try:
                 _shared_midi = MidiOut(port_name="StreamDeck Gen",
-                                       iac_prefer=["IAC Driver Bus 2", "IAC Driver"])
+                                       iac_prefer=["sdeck Bus 2", "IAC Driver Bus 2", "Bus 2"])
             except Exception:
                 _shared_midi = None
     return _shared_midi

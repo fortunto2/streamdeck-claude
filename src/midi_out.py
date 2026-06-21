@@ -67,7 +67,8 @@ class MidiOut:
         if chosen_idx is not None:
             self._midi.open_port(chosen_idx)
             log.info("MIDI: opened existing port %s", chosen_label)
-            self.opened_kind = "iac" if "IAC Driver" in (chosen_label or "") else "existing"
+            lbl = chosen_label or ""
+            self.opened_kind = "iac" if ("IAC Driver" in lbl or "Bus " in lbl) else "existing"
             self.opened_name = chosen_label or port_name
         else:
             # Fall back to a virtual port (ephemeral — REAPER may need a

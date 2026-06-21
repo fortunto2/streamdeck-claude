@@ -7,20 +7,38 @@ Link — see `music-software-setup.md`).
 
 ## How it works
 
-Each button sends a unique MIDI **note on channel 16** (note number = the key's
-position, 0–30). Channel 16 is reserved for VDJ — the drum machine (ch 10) and
-the generator voices (ch 1–6) never touch it, so nothing cross-triggers.
+The VDJ page uses its **own dedicated MIDI port** so VirtualDJ never sees the
+instrument notes (drum machine on Bus 2 ch 10, generators on Bus 2 ch 1–6) or
+the Looper (Bus 1). It opens, in order:
+
+1. **IAC Driver Bus 3** if you've created one (persistent — survives restarts), else
+2. a **virtual port "StreamDeck VDJ"** (works immediately, but disappears when the
+   daemon stops, so VDJ may need a remap after a cold restart).
+
+Either way, VDJ only ever receives VDJ button presses — Learn can't grab a drum
+note. Each button sends a unique note (note number = key index, 0–30).
+
+The daemon log (`make logs`) prints which port it opened:
+`VDJ control → MIDI port: …  (map this one in VirtualDJ)`.
+
+### Recommended: make a dedicated IAC Bus 3
+
+For a stable, persistent mapping:
+
+1. **Audio MIDI Setup → MIDI Studio → IAC Driver** → add a 3rd bus (so you have
+   Bus 1, Bus 2, Bus 3). Keep "Device is online" checked.
+2. Restart the daemon (`make restart-daemon`). The VDJ page will now open Bus 3.
 
 ## One-time mapping in Virtual DJ
 
-1. **Settings → CONTROLLERS → IAC Driver** (the one the daemon sends on; if you
-   have two, it's the notes bus / IAC Bus 2). → **Edit mapping**.
+1. **Settings → CONTROLLERS** → pick the port the log named (**IAC Driver Bus 3**,
+   or **StreamDeck VDJ** if you skipped the IAC bus) → **Edit mapping**.
 2. For each button: click an empty mapping slot → **Learn** → press the button
    on the deck → it captures the note → type the VDJ action in the box.
 3. Save the mapping.
 
-> Tip: map while the drum machine / generators are **stopped**, so VDJ's Learn
-> doesn't grab a drum note by mistake.
+Because the port is dedicated, you can map even while the drums are playing — VDJ
+won't see them.
 
 ## Suggested actions (button → VDJ verb)
 

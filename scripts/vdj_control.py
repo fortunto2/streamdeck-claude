@@ -1,28 +1,29 @@
 """Virtual DJ control surface — Stream Deck as a MIDI controller for VDJ.
 
-VirtualDJ sees the macOS IAC Driver as a MIDI controller (Settings →
-CONTROLLERS → IAC Driver → Edit mapping). Each button here sends a unique
-MIDI note on a dedicated channel (16), isolated from the drum machine
-(ch 10) and the generator voices (ch 1-6) so they never cross-trigger.
+VirtualDJ sees a macOS MIDI port as a controller (Settings → CONTROLLERS →
+… → Edit mapping). This surface uses its OWN dedicated port so VDJ never
+sees the instrument notes: it opens **IAC Driver Bus 3** if you've made one,
+otherwise a virtual port named **"StreamDeck VDJ"**. Either way it's separate
+from the notes bus (Bus 2: drum ch10 + generators ch1-6) and the Looper bus
+(Bus 1) — so VDJ's Learn can't grab a drum note, and the stream stays clean.
 
-You map the notes once in VDJ's "Edit mapping": click a slot, hit Learn,
-press the deck button, then type the VDJ action (e.g. `deck 1 play`). The
-suggested action for each button is in docs/virtualdj-control.md.
+Each button sends a unique MIDI note (note number = key index). Map them once
+in VDJ's "Edit mapping": click a slot, hit Learn, press the deck button, then
+type the VDJ action (e.g. `deck 1 play`). See docs/virtualdj-control.md.
 
-No feedback (VDJ → deck) yet — this is one-way control. Buttons flash on
-press; that's the local cue, the real state lives in VDJ.
+No feedback (VDJ → deck) yet — one-way control. Buttons flash on press.
 """
 
 from __future__ import annotations
 
-import time
-
 import deck_ui
 from control_surface import ControlSurface
 
-from isobar_engine import _get_midi
+from midi_out import MidiOut
 
-VDJ_CHANNEL = 15   # MIDI channel 16 — reserved for VDJ, nothing else uses it
+VDJ_CHANNEL = 0    # dedicated port, so channel is free — use ch 1
+VDJ_PORT = "StreamDeck VDJ"
+VDJ_IAC_PREFER = ["sdeck Bus 3", "IAC Driver Bus 3", "Bus 3"]   # its own bus, else virtual
 KEY_HOME = ControlSurface.HOME_KEY  # 31
 
 # (key, label, sub, colour). The MIDI note sent == key index. A1/B1 = decks.
@@ -55,17 +56,27 @@ class VdjControl(ControlSurface):
     def __init__(self, deck, on_home):
         super().__init__(deck, on_home)
         self._midi = None
+        self._port = "—"
 
     def start(self) -> None:
         self.running = True
         try:
-            self._midi = _get_midi()
-        except Exception:
+            self._midi = MidiOut(port_name=VDJ_PORT, iac_prefer=VDJ_IAC_PREFER)
+            self._port = getattr(self._midi, "opened_name", VDJ_PORT)
+            print(f"VDJ control → MIDI port: {self._port}  (map this one in VirtualDJ)")
+        except Exception as e:
+            print(f"VDJ control: MIDI open failed: {e}")
             self._midi = None
         self.render()
 
     def on_teardown(self) -> None:
-        pass
+        if self._midi is not None:
+            try:
+                self._midi.all_notes_off(VDJ_CHANNEL)
+                self._midi.close()
+            except Exception:
+                pass
+            self._midi = None
 
     # -- rendering -----------------------------------------------------
 
