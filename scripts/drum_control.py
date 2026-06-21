@@ -27,6 +27,8 @@ KEY_CLEAR = 25
 KEY_CLEAR_ALL = 26
 KEY_BEAT = 27      # cycle a built-in groove
 KEY_SRC = 28       # link the active lane to a GEN voice's rhythm
+KEY_SWING = 29     # cycle swing amount
+KEY_ACCENT = 30    # toggle dynamics (accents + humanise)
 KEY_HOME = ControlSurface.HOME_KEY  # 31
 FPS = 14.0
 LONG_PRESS = 0.35   # seconds held to count as a long press (ratchet)
@@ -195,8 +197,17 @@ class DrumControl(ControlSurface):
         self.set_key(KEY_SRC, deck_ui.btn("#5b21b6" if src else "#1f2937",
                                           [("SRC ↻", 10, "#ddd6fe"),
                                            (f"GEN {src}" if src else "off", 14, "#fff" if src else "#9ca3af")]))
-        for k in (29, 30):
-            self.set_key(k, deck_ui.btn("#0b0f1a", []))
+        sw = snap.get("swing", 0.0)
+        swing_pct = int(round(50 + sw * 50))
+        self.set_key(KEY_SWING, deck_ui.btn("#0e7490" if sw > 0 else "#1f2937",
+                                            [("SWING ↻", 10, "#a5f3fc"),
+                                             (f"{swing_pct}%" if sw > 0 else "off", 16,
+                                              "#fff" if sw > 0 else "#9ca3af")]))
+        acc = snap.get("accent", False)
+        self.set_key(KEY_ACCENT, deck_ui.btn("#b45309" if acc else "#1f2937",
+                                             [("ACCENT", 12, "#fde68a" if acc else "#cbd5e1"),
+                                              ("dynamics" if acc else "flat", 9,
+                                               "#fbbf24" if acc else "#9ca3af")]))
         self.render_home_key()
 
     # -- input ---------------------------------------------------------
@@ -246,4 +257,10 @@ class DrumControl(ControlSurface):
             self.render()
         elif key == KEY_SRC:
             machine.cycle_source(self.active_lane())
+            self.render()
+        elif key == KEY_SWING:
+            machine.cycle_swing()
+            self.render()
+        elif key == KEY_ACCENT:
+            machine.toggle_accent()
             self.render()

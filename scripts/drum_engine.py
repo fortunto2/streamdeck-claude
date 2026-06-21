@@ -81,6 +81,8 @@ class DrumMachine:
         self.patterns = [[0] * N_STEPS for _ in DRUMS]
         self.source = [None] * len(DRUMS)   # per-lane: None or a GEN voice key
         self.ratchet: dict[tuple[int, int], int] = {}   # (lane, step) -> 2/3 sub-hits
+        self.swing = 0.0      # 0..~0.25 — fraction of a 16th the off-beats lag
+        self.accent = False   # dynamics: downbeat accents + humanise + soft ghosts
         # A simple default groove so it's immediately useful.
         for s in (0, 4, 8, 12):
             self.patterns[0][s] = 1                 # Kick (lane 0) — four on the floor
@@ -137,6 +139,31 @@ class DrumMachine:
             self.source = [None] * len(DRUMS)
             self.ratchet.clear()
 
+    SWING_STEPS = [0.0, 0.08, 0.16, 0.24]   # ≈ 50% / 54% / 58% / 62%
+
+    def cycle_swing(self) -> None:
+        with self.lock:
+            cur = min(self.SWING_STEPS, key=lambda s: abs(s - self.swing))
+            self.swing = self.SWING_STEPS[(self.SWING_STEPS.index(cur) + 1) % len(self.SWING_STEPS)]
+
+    def swing_pct(self) -> int:
+        return int(round(50 + self.swing * 50))   # 0.0→50%, 0.24→62%
+
+    def toggle_accent(self) -> None:
+        with self.lock:
+            self.accent = not self.accent
+
+    def _velocity(self, sixteenth: int, sub: int) -> int:
+        """Dynamics: flat 110 unless accent is on, then accent the quarter-note
+        downbeats, humanise the rest, and soften ratchet repeats / off-beats."""
+        if not self.accent:
+            return 110
+        v = 118 if sixteenth % 4 == 0 else (84 if sixteenth % 2 == 1 else 100)
+        v += random.randint(-10, 6)             # humanise
+        if sub > 0:
+            v = int(v * 0.6)                     # ratchet repeats are ghosts
+        return max(1, min(127, v))
+
     def cycle_source(self, lane: int) -> None:
         """Link a lane to a GEN voice's rhythm (off → A … F → off)."""
         with self.lock:
@@ -160,14 +187,16 @@ class DrumMachine:
         with self.lock:
             return {"running": self.running, "armed": self.armed, "pending": self.pending,
                     "step": self._step, "patterns": [list(p) for p in self.patterns],
-                    "source": list(self.source), "ratchet": dict(self.ratchet)}
+                    "source": list(self.source), "ratchet": dict(self.ratchet),
+                    "swing": self.swing, "accent": self.accent}
 
     # -- save / restore (patterns + per-lane GEN source + ratchets) ----
 
     def get_state(self) -> dict:
         with self.lock:
             return {"patterns": [list(p) for p in self.patterns], "source": list(self.source),
-                    "ratchet": {f"{l}_{s}": c for (l, s), c in self.ratchet.items()}}
+                    "ratchet": {f"{l}_{s}": c for (l, s), c in self.ratchet.items()},
+                    "swing": self.swing, "accent": self.accent}
 
     def set_state(self, s: dict) -> None:
         with self.lock:
@@ -193,6 +222,13 @@ class DrumMachine:
                             self.ratchet[(lane, st)] = cnt
                     except Exception:
                         pass
+            if "swing" in s:
+                try:
+                    self.swing = max(0.0, min(0.3, float(s["swing"])))
+                except Exception:
+                    pass
+            if "accent" in s:
+                self.accent = bool(s["accent"])
 
     # -- transport (bar-quantised, same as the voices) -----------------
 
@@ -221,10 +257,10 @@ class DrumMachine:
         else:
             self._stop.set()
 
-    def _on(self, note: int) -> None:
+    def _on(self, note: int, vel: int = 110) -> None:
         if self._midi:
             try:
-                self._midi.note_on(note, 110, self.channel)
+                self._midi.note_on(note, vel, self.channel)
             except Exception:
                 pass
 
@@ -244,7 +280,7 @@ class DrumMachine:
         clock = link.clock()
         qb = int(QUANTUM * 4)
         last16 = None
-        sched: list[list] = []   # each: [note, on_us, off_us, started]
+        sched: list[list] = []   # each: [note, on_us, off_us, started, vel]
         ending = False
         while not self._stop.is_set() and not ending:
             now = clock.micros()
@@ -255,7 +291,7 @@ class DrumMachine:
             still = []
             for it in sched:
                 if not it[3] and now >= it[1]:
-                    self._on(it[0])
+                    self._on(it[0], it[4])
                     it[3] = True
                 if it[3] and now >= it[2]:
                     self._off(it[0])
@@ -276,10 +312,20 @@ class DrumMachine:
                     armed = self.armed
                     step = sixteenth % N_STEPS
                     self._step = step
+                    swing, accent = self.swing, self.accent
                     lane_state = [(self.patterns[i][step], self.source[i],
                                    self.ratchet.get((i, step), 1)) for i in range(len(DRUMS))]
                 if not ending and armed:
                     step_us = 60.0 / max(tempo, 1.0) / 4.0 * 1_000_000
+                    # swing: nudge the off-beat 16ths late by a fraction of a step
+                    base_on = now + (int(step_us * swing) if sixteenth % 2 == 1 else 0)
+
+                    def fire(note, on_us, vel):
+                        started = on_us <= now
+                        if started:
+                            self._on(note, vel)
+                        sched.append([note, on_us, on_us + 25_000, started, vel])
+
                     for i, (on_local, src, rat) in enumerate(lane_state):
                         note = DRUMS[i][1]
                         if src is not None:   # follow a GEN voice's rhythm (no ratchet)
@@ -287,21 +333,15 @@ class DrumMachine:
                             if sv is not None:
                                 p = sv.step_prob(sixteenth)
                                 if p > 0 and (p >= 1.0 or random.random() < p):
-                                    self._on(note)
-                                    sched.append([note, now, now + 25_000, True])
+                                    fire(note, base_on, self._velocity(sixteenth, 0))
                         elif on_local:
                             r = max(1, rat)
                             if r == 1:
-                                self._on(note)
-                                sched.append([note, now, now + 25_000, True])
+                                fire(note, base_on, self._velocity(sixteenth, 0))
                             else:         # ratchet — r retriggers across the 16th
                                 sub = step_us / r
-                                dur = int(min(25_000, sub * 0.8))
                                 for k in range(r):
-                                    on_us = now + int(k * sub)
-                                    if k == 0:
-                                        self._on(note)
-                                    sched.append([note, on_us, on_us + dur, k == 0])
+                                    fire(note, base_on + int(k * sub), self._velocity(sixteenth, k))
             self._stop.wait(0.004)
         for it in sched:
             if it[3]:
