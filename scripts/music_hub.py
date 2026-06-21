@@ -40,6 +40,10 @@ try:
 except Exception:  # pragma: no cover
     drum_control = None
     drum_machine = None
+try:
+    import vdj_control
+except Exception:  # pragma: no cover
+    vdj_control = None
 
 
 def _gen_factory(voice):
@@ -63,6 +67,8 @@ def _instruments():
         items.append((15, "GEN F", "arp", "#eab308", _gen_factory("F"), "F"))
     if drum_control is not None:
         items.append((16, "DRUM", "808", "#dc2626", drum_control.DrumControl, "DRUM"))
+    if vdj_control is not None:
+        items.append((17, "VDJ", "decks", "#0ea5e9", vdj_control.VdjControl, None))
     return items
 
 
