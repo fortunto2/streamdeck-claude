@@ -17,16 +17,13 @@ from isobar_engine import _get_link, _get_midi, QUANTUM
 N_STEPS = 16
 CH = 9   # GM drums = MIDI channel 10
 
-# (name, GM note, colour)
+# All 16 Drum-Rack lanes (Ableton 4×4: Bass Drum = C1 = 36, chromatic up).
+# (name, GM note) — colour/grouping is applied by the control surface.
 DRUMS = [
-    ("KICK", 36, "#ef4444"),
-    ("SNARE", 38, "#f97316"),
-    ("HAT-C", 42, "#eab308"),
-    ("HAT-O", 46, "#84cc16"),
-    ("CLAP", 39, "#06b6d4"),
-    ("TOM", 45, "#a855f7"),
-    ("RIM", 37, "#ec4899"),
-    ("PERC", 50, "#14b8a6"),
+    ("Kick", 36), ("Rim", 37), ("Snare", 38), ("Clap", 39),
+    ("LoConga", 40), ("MidConga", 41), ("HatC", 42), ("HiConga", 43),
+    ("LoTom", 44), ("MidTom", 45), ("HatO", 46), ("HiTom", 47),
+    ("Maracas", 48), ("Cymbal", 49), ("CowBell", 50), ("Claves", 51),
 ]
 
 
@@ -42,11 +39,11 @@ class DrumMachine:
         self.patterns = [[0] * N_STEPS for _ in DRUMS]
         # A simple default groove so it's immediately useful.
         for s in (0, 4, 8, 12):
-            self.patterns[0][s] = 1                 # kick — four on the floor
+            self.patterns[0][s] = 1                 # Kick (lane 0) — four on the floor
         for s in (4, 12):
-            self.patterns[1][s] = 1                 # snare — backbeat
+            self.patterns[2][s] = 1                 # Snare (lane 2) — backbeat
         for s in range(0, N_STEPS, 2):
-            self.patterns[2][s] = 1                 # closed hat — 8ths
+            self.patterns[6][s] = 1                 # Closed Hat (lane 6) — 8ths
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._midi = None

@@ -1,8 +1,10 @@
 """808/909 drum machine — control surface for DrumMachine.
 
-Row 0: pick a drum voice (kick / snare / hat / …). Rows 1-2: that voice's
-16 steps — tap to toggle, green playhead sweeps. Row 3: play/stop (bar-
-quantised), clear voice, clear all, home.
+All 16 Drum-Rack lanes live in the engine; the 8-key top row groups them
+by family. Tap a slot to select it; tap the SAME slot again to cycle to a
+related sound (e.g. SNARE↔Rim, HAT closed↔open, TOM mid/lo/hi). Rows 1-2
+are the selected lane's 16 steps (tap = toggle, green playhead). Row 3:
+play/stop (bar-quantised), clear lane, clear all, home.
 """
 
 from __future__ import annotations
@@ -18,19 +20,32 @@ from control_surface import ControlSurface
 from drum_engine import machine, DRUMS, N_STEPS
 
 VOICE_ROW = range(0, 8)
-STEP_ROW = range(8, 24)     # 16 steps of the selected voice
+STEP_ROW = range(8, 24)
 KEY_PLAY = 24
 KEY_CLEAR = 25
 KEY_CLEAR_ALL = 26
 KEY_HOME = ControlSurface.HOME_KEY  # 31
 FPS = 14.0
 
+# (group label, [lane indices, in cycle order], colour). Covers all 16 lanes.
+GROUPS = [
+    ("KICK",  [0],         "#ef4444"),
+    ("SNARE", [2, 1],      "#f97316"),   # Snare, Rim
+    ("HAT",   [6, 10],     "#eab308"),   # Closed, Open
+    ("CLAP",  [3],         "#06b6d4"),
+    ("TOM",   [9, 8, 11],  "#a855f7"),   # Mid, Lo, Hi
+    ("CONGA", [5, 4, 7],   "#14b8a6"),   # Mid, Lo, Hi
+    ("PERC",  [12, 15],    "#ec4899"),   # Maracas, Claves
+    ("CYM",   [13, 14],    "#84cc16"),   # Cymbal, Cow Bell
+]
+
 
 class DrumControl(ControlSurface):
 
     def __init__(self, deck, on_home):
         super().__init__(deck, on_home)
-        self.voice = 0
+        self.group = 0
+        self.lane_sel = [0] * len(GROUPS)   # selected lane within each group
         self._poll_thread: threading.Thread | None = None
 
     def start(self) -> None:
@@ -40,7 +55,10 @@ class DrumControl(ControlSurface):
         self._poll_thread.start()
 
     def on_teardown(self) -> None:
-        pass  # machine keeps playing in the background
+        pass
+
+    def active_lane(self) -> int:
+        return GROUPS[self.group][1][self.lane_sel[self.group]]
 
     def _poll(self) -> None:
         frame = 1.0 / FPS
@@ -78,18 +96,23 @@ class DrumControl(ControlSurface):
 
     def _paint_steps(self, snap: dict) -> None:
         step = snap["step"] if (snap["running"] and snap["armed"]) else -1
-        color = DRUMS[self.voice][2]
-        row = snap["patterns"][self.voice]
+        color = GROUPS[self.group][2]
+        row = snap["patterns"][self.active_lane()]
         for i in range(N_STEPS):
             self.set_key(STEP_ROW.start + i, self._step_img(bool(row[i]), i == step, color, i % 4 == 0))
 
     def _paint_voices(self, snap: dict) -> None:
-        for i, (name, _note, color) in enumerate(DRUMS):
-            sel = (i == self.voice)
-            active = any(snap["patterns"][i])
-            bg = color if sel else ("#1f2937" if active else "#111827")
-            self.set_key(i, deck_ui.btn(bg, [(name, 13, "#fff" if sel else "#cbd5e1")],
-                                        border="#f8fafc" if sel else None))
+        for g, (_label, lanes, color) in enumerate(GROUPS):
+            lane = lanes[self.lane_sel[g]]
+            name = DRUMS[lane][0]
+            cur = (g == self.group)
+            has = any(any(snap["patterns"][ln]) for ln in lanes)
+            bg = color if cur else ("#1f2937" if has else "#111827")
+            lines = [(name, 13, "#fff" if cur else "#cbd5e1")]
+            if len(lanes) > 1:
+                lines.append((f"{self.lane_sel[g] + 1}/{len(lanes)} ↻", 9,
+                              "#fde68a" if cur else "#64748b"))
+            self.set_key(g, deck_ui.btn(bg, lines, border="#f8fafc" if cur else None))
 
     def render(self) -> None:
         if not self.running:
@@ -98,7 +121,8 @@ class DrumControl(ControlSurface):
         self._paint_voices(snap)
         self._paint_steps(snap)
         self.set_key(KEY_PLAY, self._play_img(snap))
-        self.set_key(KEY_CLEAR, deck_ui.btn("#7f1d1d", [("CLEAR", 13, "#fecaca"), (DRUMS[self.voice][0], 9, "#f87171")]))
+        self.set_key(KEY_CLEAR, deck_ui.btn("#7f1d1d", [("CLEAR", 13, "#fecaca"),
+                                                        (DRUMS[self.active_lane()][0], 9, "#f87171")]))
         self.set_key(KEY_CLEAR_ALL, deck_ui.btn("#450a0a", [("CLEAR", 13, "#fecaca"), ("all", 9, "#f87171")]))
         for k in (27, 28, 29, 30):
             self.set_key(k, deck_ui.btn("#0b0f1a", []))
@@ -111,17 +135,20 @@ class DrumControl(ControlSurface):
             return
         if key == KEY_HOME:
             self.on_home()
-        elif key in VOICE_ROW:
-            self.voice = key
+        elif key in VOICE_ROW and key < len(GROUPS):
+            if key == self.group:
+                self.lane_sel[key] = (self.lane_sel[key] + 1) % len(GROUPS[key][1])  # cycle sound
+            else:
+                self.group = key
             self.render()
         elif key in STEP_ROW:
-            machine.toggle_step(self.voice, key - STEP_ROW.start)
+            machine.toggle_step(self.active_lane(), key - STEP_ROW.start)
             self.render()
         elif key == KEY_PLAY:
             machine.toggle()
             self.render()
         elif key == KEY_CLEAR:
-            machine.clear_voice(self.voice)
+            machine.clear_voice(self.active_lane())
             self.render()
         elif key == KEY_CLEAR_ALL:
             machine.clear_all()
