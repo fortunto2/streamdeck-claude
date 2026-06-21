@@ -30,10 +30,16 @@ try:
     import isobar_control
     from isobar_engine import (VOICES, start_all, stop_all, any_playing,
                                save_preset, list_presets, load_preset, delete_preset,
-                               tap_tempo, mult_tempo)
+                               tap_tempo, mult_tempo, set_link_tempo)
 except Exception:  # pragma: no cover
     isobar_control = None
     VOICES = {}
+try:
+    import drum_control
+    from drum_engine import machine as drum_machine
+except Exception:  # pragma: no cover
+    drum_control = None
+    drum_machine = None
 
 
 def _gen_factory(voice):
@@ -55,7 +61,17 @@ def _instruments():
         items.append((13, "GEN D", "chord", "#14b8a6", _gen_factory("D"), "D"))
         items.append((14, "GEN E", "walk", "#f97316", _gen_factory("E"), "E"))
         items.append((15, "GEN F", "arp", "#eab308", _gen_factory("F"), "F"))
+    if drum_control is not None:
+        items.append((16, "DRUM", "808", "#dc2626", drum_control.DrumControl, "DRUM"))
     return items
+
+
+def _engine_for(voice):
+    if voice == "DRUM":
+        return drum_machine
+    if voice and voice in VOICES:
+        return VOICES[voice]
+    return None
 
 
 KEY_TEMPO = 0
@@ -64,6 +80,7 @@ KEY_STOP_ALL = 3
 KEY_TAP = 4
 KEY_MUL2 = 5
 KEY_DIV2 = 6
+KEY_T100 = 7
 KEY_SAVE = 24
 KEY_PREV = 25
 KEY_NAME = 26      # tap = load selected preset
@@ -115,9 +132,16 @@ class MusicHub(ControlSurface):
             ("● LINK" if synced else "solo", 9, "#4ade80" if synced else "#6b7280"),
         ]))
 
+    def _all_engines(self):
+        es = list(VOICES.values())
+        if drum_machine is not None:
+            es.append(drum_machine)
+        return es
+
     def _paint_transport(self) -> None:
-        armed = any(v.armed for v in VOICES.values()) if VOICES else False
-        pending = any(v.pending for v in VOICES.values()) if VOICES else False
+        engines = self._all_engines()
+        armed = any(e.armed for e in engines)
+        pending = any(e.pending for e in engines)
         blink = int(time.monotonic() * 2) % 2
         if pending and blink:
             pbg = "#a16207"   # queued — blink amber
@@ -129,7 +153,7 @@ class MusicHub(ControlSurface):
     def _paint_instruments(self) -> None:
         blink = int(time.monotonic() * 2) % 2
         for key, label, sub, color, _factory, voice in self.items:
-            v = VOICES.get(voice) if voice else None
+            v = _engine_for(voice)
             if v is not None and v.pending:
                 bg = "#a16207" if blink else "#3f2d06"   # queued
                 st, col = ("→ start" if v.pending == "start" else "→ stop"), "#fde68a"
@@ -143,6 +167,7 @@ class MusicHub(ControlSurface):
         self.set_key(KEY_TAP, deck_ui.btn("#0e7490", [("TAP", 17, "#fff"), ("tempo", 9, "#a5f3fc")]))
         self.set_key(KEY_MUL2, deck_ui.btn("#1e293b", [("×2", 22, "#fff"), ("bpm", 9, "#94a3b8")]))
         self.set_key(KEY_DIV2, deck_ui.btn("#1e293b", [("÷2", 22, "#fff"), ("bpm", 9, "#94a3b8")]))
+        self.set_key(KEY_T100, deck_ui.btn("#1e293b", [("100", 22, "#fff"), ("reset", 9, "#94a3b8")]))
 
     def _paint_presets(self) -> None:
         n = len(self.presets)
@@ -185,10 +210,14 @@ class MusicHub(ControlSurface):
             return
         if key == KEY_PLAY_ALL:
             start_all()
+            if drum_machine is not None:
+                drum_machine.start()
             self.render()
             return
         if key == KEY_STOP_ALL:
             stop_all()
+            if drum_machine is not None:
+                drum_machine.stop()
             self.render()
             return
         if key == KEY_TAP:
@@ -201,6 +230,10 @@ class MusicHub(ControlSurface):
             return
         if key == KEY_DIV2:
             mult_tempo(0.5)
+            self._paint_tempo()
+            return
+        if key == KEY_T100:
+            set_link_tempo(100)
             self._paint_tempo()
             return
         if key == KEY_SAVE:
