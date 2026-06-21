@@ -95,7 +95,9 @@ class AbletonControl(ControlSurface):
         # Looper Clear/×2/÷2 keys have something to map to in Live.
         if MidiOut is not None:
             try:
-                self.midi = MidiOut()
+                # Looper control → IAC Bus 1 (Live: Remote on, Track off) so
+                # these messages map to buttons and never play notes.
+                self.midi = MidiOut(iac_prefer=["IAC Driver Bus 1", "IAC Driver"])
             except Exception:
                 self.midi = None
         self.render()

@@ -49,6 +49,10 @@ try:
     import ableton_control
 except Exception:  # pragma: no cover
     ableton_control = None
+try:
+    import isobar_control
+except Exception:  # pragma: no cover
+    isobar_control = None
 
 # ── config ────────────────────────────────────────────────────────────
 
@@ -580,7 +584,7 @@ class Dashboard:
         self.set_key(8, render_section_btn("GAMES", f"({n_games})", "#4c1d95"))
         self.set_key(9, render_section_btn("CRYPTO", "REAL", "#0ea5e9"))
         self.set_key(10, render_section_btn("CRYPTO", "SIM", "#166534"))
-        self.set_key(11, render_section_btn("AGENTS", "", "#7c3aed"))
+        self.set_key(11, render_section_btn("GEN", "isobar", "#7c3aed"))
         self.set_key(12, render_section_btn("REAPER", "mix", "#0f766e"))
         self.set_key(13, render_section_btn("ABLETON", "live", "#f59e0b"))
         self.set_key(14, render_voice_btn(not sound_engine.global_mute))
@@ -887,7 +891,9 @@ class Dashboard:
                 self.launch_game(info)
             return
         if key == 11:
-            self.show_agents()
+            # GEN — generative (isobar) pattern engine
+            if isobar_control is not None:
+                self.launch_control(isobar_control.IsobarControl)
             return
         if key == 12:
             # REAPER control surface (transport + live mixer over OSC)
@@ -1023,12 +1029,14 @@ class Dashboard:
 
         self._schedule_tick()
 
-        # Block until device disconnects or Ctrl+C
+        # Block until device disconnects or Ctrl+C. Use connected() — a real
+        # USB probe — not key_count() (which returns a constant and never
+        # fails, so unplug went undetected and the reconnect loop never ran).
         try:
             while self.running:
-                # Check if deck is still connected
                 try:
-                    self.deck.key_count()
+                    if not self.deck.connected():
+                        break
                 except Exception:
                     break
                 time.sleep(1)

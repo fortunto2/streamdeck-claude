@@ -33,22 +33,30 @@ PORT_NAME = "StreamDeck"
 class MidiOut:
     """Wraps a MIDI output port. Thread-safe note send."""
 
-    def __init__(self, port_name: str = PORT_NAME, prefer_iac: bool = True):
+    def __init__(self, port_name: str = PORT_NAME, prefer_iac: bool = True,
+                 iac_prefer: list[str] | None = None):
         if rtmidi is None:
             raise RuntimeError("python-rtmidi not installed")
         self._midi = rtmidi.MidiOut()
         self._lock = threading.Lock()
         self.port_name = port_name
+        # macOS shows IAC ports as "IAC Driver Bus 1", "IAC Driver Bus 2", …
+        # `iac_prefer` is a priority list of substrings — lets callers target
+        # a specific bus (e.g. notes on Bus 2, control on Bus 1) and still
+        # fall back to any IAC bus.
+        iac_prefer = iac_prefer or ["IAC Driver"]
         # Probe available output ports.
         names = self._midi.get_ports()
         chosen_idx: int | None = None
         chosen_label: str | None = None
         if prefer_iac:
-            for i, n in enumerate(names):
-                # macOS shows IAC ports as "IAC Driver Bus 1", "IAC Driver Bus 2", …
-                if "IAC Driver" in n:
-                    chosen_idx = i
-                    chosen_label = n
+            for want in iac_prefer:
+                for i, n in enumerate(names):
+                    if want in n:
+                        chosen_idx = i
+                        chosen_label = n
+                        break
+                if chosen_idx is not None:
                     break
         if chosen_idx is None:
             for i, n in enumerate(names):
