@@ -794,11 +794,11 @@ class Dashboard:
             if pressed and key == 0:
                 self._stop_game()
                 self.show_home()
-                self.deck.set_key_callback(self.on_key)
+                self._bind_keys(self.on_key)
                 return
             original_on_key(deck, key, pressed)
 
-        self.deck.set_key_callback(wrapped_on_key)
+        self._bind_keys(wrapped_on_key)
 
     def _stop_game(self):
         sound_engine.stop_all()
@@ -842,7 +842,7 @@ class Dashboard:
         controller.goto = self.launch_control
         with self.lock:
             self.active_control = controller
-        self.deck.set_key_callback(controller.on_key)
+        self._bind_keys(controller.on_key)
         try:
             controller.start()
         except Exception as e:
@@ -852,7 +852,24 @@ class Dashboard:
     def _return_home_from_control(self):
         self._stop_control()
         self.show_home()
-        self.deck.set_key_callback(self.on_key)
+        self._bind_keys(self.on_key)
+
+    def _bind_keys(self, cb):
+        """Register a key callback that can never crash the deck's reader.
+
+        The StreamDeck library's read thread only catches TransportError; any
+        other exception escaping a callback kills the thread permanently and
+        the whole deck goes unresponsive ("no control" until restart). Wrap
+        every callback so a misbehaving surface logs but never bricks input.
+        """
+        def safe(deck, key, pressed):
+            try:
+                cb(deck, key, pressed)
+            except Exception:
+                import traceback
+                print(f"key callback error on key {key}:")
+                traceback.print_exc()
+        self.deck.set_key_callback(safe)
 
     def _stop_control(self):
         with self.lock:
@@ -1110,7 +1127,7 @@ def main():
 
             app = Dashboard(deck)
             app.show_home()
-            deck.set_key_callback(app.on_key)
+            app._bind_keys(app.on_key)
             app.run()
         except Exception as e:
             print(f"Device error: {e}")

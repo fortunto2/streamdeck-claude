@@ -540,20 +540,27 @@ def set_link_tempo(bpm: float) -> None:
 
 def tap_tempo() -> float | None:
     """Register a tap and set the Link tempo from recent tap intervals.
-    Keep tapping to home in (sliding window of 8); a >2s gap starts fresh."""
+
+    Smoothed so it doesn't lurch: needs ≥3 taps before it commits anything,
+    then locks to the *median of the last 3 intervals* (a single off-beat tap
+    can't yank the tempo) and rounds to a whole BPM. Keep tapping to home in;
+    a >2s gap starts a fresh count."""
     global _tap_times
     now = time.monotonic()
     if _tap_times and now - _tap_times[-1] > 2.0:
         _tap_times = []
     _tap_times.append(now)
-    _tap_times = _tap_times[-8:]
-    if len(_tap_times) >= 2:
-        gaps = [_tap_times[i + 1] - _tap_times[i] for i in range(len(_tap_times) - 1)]
-        avg = sum(gaps) / len(gaps)
-        if avg > 0:
-            bpm = max(20.0, min(300.0, 60.0 / avg))
-            set_link_tempo(bpm)
-            return bpm
+    _tap_times = _tap_times[-5:]
+    gaps = [_tap_times[i + 1] - _tap_times[i] for i in range(len(_tap_times) - 1)]
+    if len(gaps) < 2:                       # wait for the 3rd tap — no early jump
+        return None
+    recent = sorted(gaps[-3:])              # median of the last 3 rejects outliers
+    mid = recent[len(recent) // 2] if len(recent) % 2 else \
+        (recent[len(recent) // 2 - 1] + recent[len(recent) // 2]) / 2
+    if mid > 0:
+        bpm = max(20.0, min(300.0, round(60.0 / mid)))
+        set_link_tempo(bpm)
+        return bpm
     return None
 
 
