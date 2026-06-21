@@ -10,6 +10,7 @@ bar-quantised (queued → starts/stops on the next Link bar), like the voices.
 
 from __future__ import annotations
 
+import random
 import threading
 
 from isobar_engine import _get_link, _get_midi, QUANTUM, VOICES
@@ -196,10 +197,12 @@ class DrumMachine:
                 if not ending and armed:
                     hits = []
                     for i, (on_local, src) in enumerate(lane_state):
-                        if src is not None:   # follow a GEN voice's rhythm
+                        if src is not None:   # follow a GEN voice's rhythm, ghosts included
                             sv = VOICES.get(src)
-                            if sv is not None and sv.step_prob(sixteenth) > 0:
-                                hits.append(DRUMS[i][1])
+                            if sv is not None:
+                                p = sv.step_prob(sixteenth)
+                                if p > 0 and (p >= 1.0 or random.random() < p):
+                                    hits.append(DRUMS[i][1])
                         elif on_local:
                             hits.append(DRUMS[i][1])
                     for note in hits:

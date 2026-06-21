@@ -98,35 +98,73 @@ class DrumControl(ControlSurface):
         d.ellipse([48 - r, 48 - r, 48 + r, 48 + r], fill=dot)
         return img
 
+    def _link_step_img(self, prob: float, playhead: bool, beat: bool) -> Image.Image:
+        if playhead:
+            bg, dot, r = "#052e16", ("#4ade80" if prob > 0 else "#16341f"), (22 if prob > 0 else 14)
+        elif prob >= 0.99:
+            bg, dot, r = "#0b0f1a", "#a78bfa", 22
+        elif prob > 0:
+            bg, dot, r = "#0b0f1a", "#5b21b6", 13      # ghost — dim lilac
+        else:
+            bg, dot, r = ("#11161f" if beat else "#0b0f1a"), "#1e293b", 9
+        img = Image.new("RGB", deck_ui.SIZE, bg)
+        ImageDraw.Draw(img).ellipse([48 - r, 48 - r, 48 + r, 48 + r], fill=dot)
+        return img
+
     def _paint_steps(self, snap: dict) -> None:
-        step = snap["step"] if (snap["running"] and snap["armed"]) else -1
         lane = self.active_lane()
         src = snap["source"][lane]
         if src is not None and src in VOICES:
-            # Lane follows a GEN voice — show that rhythm (read-only, lilac).
+            # Mirror the GEN voice's live pattern — exactly as on its page
+            # (only its step count, ghosts dim), looping playhead within it.
             gp = VOICES[src].snapshot()["pattern"]
-            n = len(gp) or 1
+            gn = len(gp)
+            ph = (snap["step"] % gn) if (snap["running"] and snap["armed"] and gn) else -1
             for i in range(N_STEPS):
-                on = gp[i % n] > 0
-                self.set_key(STEP_ROW.start + i, self._step_img(on, i == step, "#a78bfa", i % 4 == 0))
+                if i < gn:
+                    self.set_key(STEP_ROW.start + i, self._link_step_img(gp[i], i == ph, i % 4 == 0))
+                else:
+                    self.set_key(STEP_ROW.start + i, deck_ui.btn("#0b0f1a", []))
         else:
+            step = snap["step"] if (snap["running"] and snap["armed"]) else -1
             color = GROUPS[self.group][2]
             row = snap["patterns"][lane]
             for i in range(N_STEPS):
                 self.set_key(STEP_ROW.start + i, self._step_img(bool(row[i]), i == step, color, i % 4 == 0))
 
+    def _voice_img(self, g: int, snap: dict) -> Image.Image:
+        _label, lanes, color = GROUPS[g]
+        cur = (g == self.group)
+        sel_lane = lanes[self.lane_sel[g]]
+        name = DRUMS[sel_lane][0]
+        active_any = any(any(snap["patterns"][ln]) or snap["source"][ln] for ln in lanes)
+        bg = color if cur else ("#1f2937" if active_any else "#111827")
+        img = Image.new("RGB", deck_ui.SIZE, bg)
+        d = ImageDraw.Draw(img)
+        f = deck_ui.font(13)
+        d.text((48, 32), deck_ui.fit(d, name, f, 90), font=f, fill="#fff" if cur else "#cbd5e1", anchor="mm")
+        # Activity dots — one per lane in the group (incl. hidden ones):
+        # filled if it has steps, gold if GEN-linked, white = the shown one.
+        n = len(lanes)
+        gap = 16
+        x0 = 48 - (n - 1) * gap / 2.0
+        for k, ln in enumerate(lanes):
+            sourced = snap["source"][ln] is not None
+            has = any(snap["patterns"][ln]) or sourced
+            is_sel = (ln == sel_lane)
+            cx, cy, r = int(x0 + k * gap), 70, (6 if is_sel else 5)
+            if has:
+                col = "#fde68a" if sourced else ("#ffffff" if is_sel else "#cbd5e1")
+                d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=col)
+            else:
+                d.ellipse([cx - r, cy - r, cx + r, cy + r], outline="#475569", width=1)
+        if cur:
+            d.rectangle([0, 0, 95, 95], outline="#f8fafc", width=3)
+        return img
+
     def _paint_voices(self, snap: dict) -> None:
-        for g, (_label, lanes, color) in enumerate(GROUPS):
-            lane = lanes[self.lane_sel[g]]
-            name = DRUMS[lane][0]
-            cur = (g == self.group)
-            has = any(any(snap["patterns"][ln]) for ln in lanes)
-            bg = color if cur else ("#1f2937" if has else "#111827")
-            lines = [(name, 13, "#fff" if cur else "#cbd5e1")]
-            if len(lanes) > 1:
-                lines.append((f"{self.lane_sel[g] + 1}/{len(lanes)} ↻", 9,
-                              "#fde68a" if cur else "#64748b"))
-            self.set_key(g, deck_ui.btn(bg, lines, border="#f8fafc" if cur else None))
+        for g in range(len(GROUPS)):
+            self.set_key(g, self._voice_img(g, snap))
 
     def render(self) -> None:
         if not self.running:

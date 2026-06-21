@@ -496,6 +496,12 @@ VOICES["B"].mode_idx = MODES.index("FLAT")          # bass = steady root
 VOICES["D"].mode_idx = MODES.index("CHORD")
 VOICES["E"].mode_idx = MODES.index("WALK")
 VOICES["F"].mode_idx = MODES.index("ARP")
+# Distinct default rhythms so the voices (and SRC-linked drum lanes) differ.
+VOICES["B"].set_steps(16); VOICES["B"].set_pulses(4)   # four-on-floor
+VOICES["C"].set_steps(8);  VOICES["C"].set_pulses(3)   # tresillo
+VOICES["D"].set_steps(16); VOICES["D"].set_pulses(7)
+VOICES["E"].set_steps(16); VOICES["E"].set_pulses(5)
+VOICES["F"].set_steps(8);  VOICES["F"].set_pulses(2)
 VOICE_KEYS = ["A", "B", "C", "D", "E", "F"]
 engine = VOICES["A"]  # back-compat default
 
