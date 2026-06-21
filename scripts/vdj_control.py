@@ -19,7 +19,7 @@ from __future__ import annotations
 import deck_ui
 from control_surface import ControlSurface
 
-from midi_out import MidiOut
+from src.midi_out import MidiOut
 
 VDJ_CHANNEL = 0    # dedicated port, so channel is free — use ch 1
 VDJ_PORT = "StreamDeck VDJ"
