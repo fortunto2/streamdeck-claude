@@ -328,12 +328,14 @@ class DrumMachine:
 
                     for i, (on_local, src, rat) in enumerate(lane_state):
                         note = DRUMS[i][1]
-                        if src is not None:   # follow a GEN voice's rhythm (no ratchet)
+                        if src is not None:   # GEN rhythm + hand-added hits overlaid
                             sv = VOICES.get(src)
+                            gen_fires = False
                             if sv is not None:
                                 p = sv.step_prob(sixteenth)
-                                if p > 0 and (p >= 1.0 or random.random() < p):
-                                    fire(note, base_on, self._velocity(sixteenth, 0))
+                                gen_fires = p > 0 and (p >= 1.0 or random.random() < p)
+                            if gen_fires or on_local:
+                                fire(note, base_on, self._velocity(sixteenth, 0))
                         elif on_local:
                             r = max(1, rat)
                             if r == 1:

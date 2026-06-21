@@ -110,13 +110,17 @@ class DrumControl(ControlSurface):
             d.ellipse([48 - r, 48 - r, 48 + r, 48 + r], fill=dot)
         return img
 
-    def _link_step_img(self, prob: float, playhead: bool, beat: bool) -> Image.Image:
+    def _link_step_img(self, prob: float, playhead: bool, beat: bool,
+                       added: bool = False) -> Image.Image:
         if playhead:
-            bg, dot, r = "#052e16", ("#4ade80" if prob > 0 else "#16341f"), (22 if prob > 0 else 14)
+            on = prob > 0 or added
+            bg, dot, r = ("#052e16", "#4ade80", 22) if on else ("#11161f", "#16341f", 14)
+        elif added:
+            bg, dot, r = "#3a1c00", "#f59e0b", 20      # hand-added hit — amber, on top
         elif prob >= 0.99:
-            bg, dot, r = "#0b0f1a", "#a78bfa", 22
+            bg, dot, r = "#0b0f1a", "#a78bfa", 22      # GEN hit — lilac
         elif prob > 0:
-            bg, dot, r = "#0b0f1a", "#5b21b6", 13      # ghost — dim lilac
+            bg, dot, r = "#0b0f1a", "#5b21b6", 13      # GEN ghost — dim lilac
         else:
             bg, dot, r = ("#11161f" if beat else "#0b0f1a"), "#1e293b", 9
         img = Image.new("RGB", deck_ui.SIZE, bg)
@@ -127,16 +131,16 @@ class DrumControl(ControlSurface):
         lane = self.active_lane()
         src = snap["source"][lane]
         if src is not None and src in VOICES:
-            # Mirror the GEN voice's live pattern — exactly as on its page
-            # (only its step count, ghosts dim), looping playhead within it.
+            # GEN voice's live pattern (lilac, tiled across the bar) with the
+            # lane's hand-added hits overlaid in amber. Playhead = the drum step.
             gp = VOICES[src].snapshot()["pattern"]
-            gn = len(gp)
-            ph = (snap["step"] % gn) if (snap["running"] and snap["armed"] and gn) else -1
+            gn = len(gp) or 1
+            row = snap["patterns"][lane]
+            ph = snap["step"] if (snap["running"] and snap["armed"]) else -1
             for i in range(N_STEPS):
-                if i < gn:
-                    self.set_key(STEP_ROW.start + i, self._link_step_img(gp[i], i == ph, i % 4 == 0))
-                else:
-                    self.set_key(STEP_ROW.start + i, deck_ui.btn("#0b0f1a", []))
+                added = bool(row[i]) if i < len(row) else False
+                self.set_key(STEP_ROW.start + i,
+                             self._link_step_img(gp[i % gn], i == ph, i % 4 == 0, added))
         else:
             step = snap["step"] if (snap["running"] and snap["armed"]) else -1
             color = GROUPS[self.group][2]
@@ -213,19 +217,19 @@ class DrumControl(ControlSurface):
     # -- input ---------------------------------------------------------
 
     def _step_gesture(self, key: int, pressed: bool) -> None:
-        """Short tap = on/off; long press = ratchet ×2/×3."""
+        """Short tap = on/off; long press = ratchet ×2/×3. On a GEN-linked
+        lane, tap adds/removes a hand hit over the GEN rhythm (no ratchet)."""
         lane = self.active_lane()
-        if machine.snapshot()["source"][lane] is not None:   # GEN-driven lane is read-only
-            return
+        sourced = machine.snapshot()["source"][lane] is not None
         step = key - STEP_ROW.start
         if pressed:
             self._press_t[key] = time.monotonic()
             return
         dt = time.monotonic() - self._press_t.pop(key, time.monotonic())
-        if dt >= LONG_PRESS:
-            machine.hold_step(lane, step)
+        if sourced or dt < LONG_PRESS:
+            machine.tap_step(lane, step)        # overlay add/remove, or plain on/off
         else:
-            machine.tap_step(lane, step)
+            machine.hold_step(lane, step)
         self.render()
 
     def on_key(self, _deck, key: int, pressed: bool) -> None:
