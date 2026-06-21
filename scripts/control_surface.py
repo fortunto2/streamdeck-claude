@@ -36,6 +36,9 @@ class ControlSurface:
         self.running = False
         self._repaint_timer: threading.Timer | None = None
         self._lock = threading.Lock()
+        # Injected by the host launcher: goto(factory, back=...) opens
+        # another surface (used by the Music Hub to switch instruments).
+        self.goto = None
 
     # -- subclass contract ----------------------------------------------
 

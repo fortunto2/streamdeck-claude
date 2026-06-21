@@ -53,6 +53,10 @@ try:
     import isobar_control
 except Exception:  # pragma: no cover
     isobar_control = None
+try:
+    import music_hub
+except Exception:  # pragma: no cover
+    music_hub = None
 
 # ── config ────────────────────────────────────────────────────────────
 
@@ -584,9 +588,9 @@ class Dashboard:
         self.set_key(8, render_section_btn("GAMES", f"({n_games})", "#4c1d95"))
         self.set_key(9, render_section_btn("CRYPTO", "REAL", "#0ea5e9"))
         self.set_key(10, render_section_btn("CRYPTO", "SIM", "#166534"))
-        self.set_key(11, render_section_btn("GEN", "isobar", "#7c3aed"))
-        self.set_key(12, render_section_btn("REAPER", "mix", "#0f766e"))
-        self.set_key(13, render_section_btn("ABLETON", "live", "#f59e0b"))
+        self.set_key(11, render_section_btn("MUSIC", "hub", "#7c3aed"))
+        self.set_key(12, render_empty())
+        self.set_key(13, render_empty())
         self.set_key(14, render_voice_btn(not sound_engine.global_mute))
         self.set_key(15, self._render_bright_btn())
 
@@ -814,12 +818,14 @@ class Dashboard:
 
     # ── control surfaces (REAPER / Ableton) ───────────────────────────
 
-    def launch_control(self, factory):
+    def launch_control(self, factory, back=None):
         """Launch a control surface that owns the whole deck.
 
         `factory(deck, on_home)` returns an object with start()/stop()/
-        on_key(deck, key, pressed). on_home is the callback the surface
-        calls to return to the home screen.
+        on_key(deck, key, pressed). on_home is the back callback — defaults
+        to returning to the home screen, but a surface can pass `back` so
+        another surface (e.g. the Music Hub) is the return target. The new
+        controller gets `.goto = launch_control` so it can open others.
         """
         self.pomo.stop()
         self._stop_health_alert()
@@ -828,11 +834,12 @@ class Dashboard:
             self.page = "control"
         self.deck.reset()
         try:
-            controller = factory(self.deck, self._return_home_from_control)
+            controller = factory(self.deck, back or self._return_home_from_control)
         except Exception as e:
             print(f"control launch failed: {e}")
             self.show_home()
             return
+        controller.goto = self.launch_control
         with self.lock:
             self.active_control = controller
         self.deck.set_key_callback(controller.on_key)
@@ -891,19 +898,9 @@ class Dashboard:
                 self.launch_game(info)
             return
         if key == 11:
-            # GEN — generative (isobar) pattern engine
-            if isobar_control is not None:
-                self.launch_control(isobar_control.IsobarControl)
-            return
-        if key == 12:
-            # REAPER control surface (transport + live mixer over OSC)
-            if reaper_control is not None:
-                self.launch_control(reaper_control.ReaperControl)
-            return
-        if key == 13:
-            # Ableton Live control surface (Session clip launcher via AbletonOSC)
-            if ableton_control is not None:
-                self.launch_control(ableton_control.AbletonControl)
+            # MUSIC — hub of all music instruments (REAPER, Ableton, GEN voices)
+            if music_hub is not None:
+                self.launch_control(music_hub.MusicHub)
             return
         if key == 14:
             # Global sound mute toggle

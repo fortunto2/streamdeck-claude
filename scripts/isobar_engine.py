@@ -1,13 +1,13 @@
 """Generative pattern engine — background voice, tempo-locked to Ableton.
 
-A single Euclidean voice clocked by **Ableton Link** (phase-locked to
-Live's tempo and bar grid — enable Link in Live's transport bar). isobar
-generates the Euclidean rhythm; the pitch follows a selectable algorithm
-(up / down / arp / random) over a selectable scale. MIDI goes out a shared
-IAC bus (or virtual port) into Live's armed track.
+A single voice clocked by **Ableton Link** (phase-locked to Live's tempo
+and bar grid — enable Link in Live's transport bar). The rhythm is a grid
+of per-step probabilities (Euclidean seed, hand-editable, dice/mutate);
+the pitch follows a selectable algorithm over a selectable scale. MIDI
+goes out IAC Bus 2 (notes) into Live's armed track.
 
-The engine is a module-level singleton so patterns keep playing while the
-deck flips between pages — only the control surface comes and goes.
+Module-level singleton so patterns keep playing while the deck flips
+between pages — only the control surface comes and goes.
 """
 
 from __future__ import annotations
@@ -16,7 +16,6 @@ import os
 import random
 import sys
 import threading
-import time
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
@@ -40,9 +39,12 @@ except Exception:  # pragma: no cover
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
 # Pitch algorithms over the active scale.
-MODES = ["UP", "DOWN", "ARP", "RND"]
+#   UP/DOWN/ARP  — deterministic motion
+#   RND/WALK     — randomised (RND = jump, WALK = drifting random walk)
+#   FLAT         — steady root note (kick / one-note bass)
+#   CHORD        — triad stab on every hit
+MODES = ["UP", "DOWN", "ARP", "RND", "WALK", "FLAT", "CHORD"]
 
-# (display name, semitone offsets)
 SCALES = [
     ("penta-", [0, 3, 5, 7, 10]),
     ("major", [0, 2, 4, 5, 7, 9, 11]),
@@ -64,7 +66,6 @@ def _euclid(pulses: int, steps: int) -> list[int]:
         return []
     if PEuclidean is not None:
         try:
-            # isobar patterns are infinite iterators — pull exactly `steps`.
             p = PEuclidean(pulses, steps)
             return [1 if next(p) else 0 for _ in range(steps)]
         except Exception:
@@ -74,23 +75,28 @@ def _euclid(pulses: int, steps: int) -> list[int]:
 
 
 class GenEngine:
-    """One Euclidean voice, Link-clocked, played out over MIDI."""
+    """One voice — per-step probability grid, Link-clocked, played over MIDI."""
 
-    def __init__(self):
+    def __init__(self, channel: int = 0, name: str = "A", root: int = 48):
         self.lock = threading.Lock()
+        self.name = name
         self.running = False
-        self.tempo = 120.0       # read from Link
-        self.peers = 0           # Link peers (>0 ⇒ synced to Live)
+        self.tempo = 120.0
+        self.peers = 0
         self.steps = 8
         self.pulses = 5
-        self.root = 48           # C3
-        self.channel = 0
+        self.root = root
+        self.channel = channel
         self.gate = 0.5
+        self.fill = False       # momentary: every step fires (16th roll)
         self.mode_idx = 0
         self.scale_idx = 0
-        self._pattern = _euclid(self.pulses, self.steps)
+        # Per-step trigger probability in [0,1]; 1=hit, 0.5=ghost, 0=rest.
+        self._pattern: list[float] = [float(v) for v in _euclid(self.pulses, self.steps)]
         self._step = 0
         self._hit = 0
+        self._fired = False     # did the current step actually trigger a note
+        self._walk = 4          # WALK-mode degree position
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._midi = None
@@ -101,8 +107,8 @@ class GenEngine:
     def _ensure_midi(self):
         if self._midi is None and MidiOut is not None:
             try:
-                # Notes go to IAC Bus 2 (Live: Track on) so they play the
-                # armed track — kept separate from Looper control on Bus 1.
+                # Notes → IAC Bus 2 (Live: Track on); Looper control is on
+                # Bus 1, so generator notes and control don't collide.
                 self._midi = MidiOut(port_name="StreamDeck Gen",
                                      iac_prefer=["IAC Driver Bus 2", "IAC Driver"])
             except Exception:
@@ -121,42 +127,7 @@ class GenEngine:
     def midi_kind(self) -> str:
         return getattr(self._midi, "opened_kind", "—") if self._midi else "—"
 
-    # -- params --------------------------------------------------------
-
-    def set_steps(self, n: int) -> None:
-        with self.lock:
-            self.steps = max(1, min(16, n))
-            self.pulses = min(self.pulses, self.steps)
-            self._pattern = _euclid(self.pulses, self.steps)
-
-    def set_pulses(self, k: int) -> None:
-        with self.lock:
-            self.pulses = max(0, min(self.steps, k))
-            self._pattern = _euclid(self.pulses, self.steps)
-
-    def nudge_root(self, semitones: int) -> None:
-        with self.lock:
-            self.root = max(0, min(120, self.root + semitones))
-
-    def cycle_mode(self) -> None:
-        with self.lock:
-            self.mode_idx = (self.mode_idx + 1) % len(MODES)
-
-    def cycle_scale(self) -> None:
-        with self.lock:
-            self.scale_idx = (self.scale_idx + 1) % len(SCALES)
-
-    def snapshot(self) -> dict:
-        with self.lock:
-            return {
-                "running": self.running, "tempo": self.tempo, "peers": self.peers,
-                "steps": self.steps, "pulses": self.pulses, "root": self.root,
-                "step": self._step, "pattern": list(self._pattern),
-                "mode": MODES[self.mode_idx], "scale": SCALES[self.scale_idx][0],
-            }
-
     def current_tempo(self) -> tuple[float, int]:
-        """Read tempo + peer count from Link on demand (also when stopped)."""
         link = self._ensure_link()
         if link is None:
             return self.tempo, 0
@@ -169,26 +140,126 @@ class GenEngine:
         except Exception:
             return self.tempo, self.peers
 
+    # -- pattern (per-step probability) --------------------------------
+
+    def set_steps(self, n: int) -> None:
+        with self.lock:
+            self.steps = max(1, min(16, n))
+            self.pulses = min(self.pulses, self.steps)
+            self._pattern = [float(v) for v in _euclid(self.pulses, self.steps)]
+
+    def set_pulses(self, k: int) -> None:
+        with self.lock:
+            self.pulses = max(0, min(self.steps, k))
+            self._pattern = [float(v) for v in _euclid(self.pulses, self.steps)]
+
+    def toggle_step(self, i: int) -> None:
+        """Tap a cell: cycle off → hit → ghost(50%) → off."""
+        with self.lock:
+            if 0 <= i < len(self._pattern):
+                cur = self._pattern[i]
+                self._pattern[i] = {0.0: 1.0, 1.0: 0.5}.get(cur, 0.0)
+
+    def randomize(self) -> None:
+        """Dice — reroll the rhythm, same hit count, random placement."""
+        with self.lock:
+            n = self.steps
+            k = max(1, min(self.pulses, n))
+            pat = [0.0] * n
+            for i in random.sample(range(n), k):
+                pat[i] = 1.0
+            self._pattern = pat
+
+    def mutate(self) -> None:
+        """Nudge one random step to a *different* state — gradual evolution."""
+        with self.lock:
+            if self._pattern:
+                i = random.randrange(len(self._pattern))
+                cur = self._pattern[i]
+                self._pattern[i] = random.choice([v for v in (0.0, 0.5, 1.0) if v != cur])
+
+    def clear_pattern(self) -> None:
+        with self.lock:
+            self._pattern = [0.0] * self.steps
+
+    def rotate(self, d: int) -> None:
+        """Shift the whole pattern around the circle (instant variation)."""
+        with self.lock:
+            n = len(self._pattern)
+            if n:
+                d %= n
+                self._pattern = self._pattern[-d:] + self._pattern[:-d]
+
+    def cycle_gate(self) -> None:
+        """Cycle note length: short → med → long → HOLD (legato/sustain)."""
+        with self.lock:
+            steps = [0.25, 0.5, 0.9, 1.0]
+            cur = min(steps, key=lambda g: abs(g - self.gate))
+            self.gate = steps[(steps.index(cur) + 1) % len(steps)]
+
+    def set_fill(self, on: bool) -> None:
+        self.fill = on
+
+    def nudge_root(self, semitones: int) -> None:
+        with self.lock:
+            self.root = max(0, min(120, self.root + semitones))
+
+    def cycle_root(self) -> None:
+        """Tap-cycle the root up through one octave (12 values, wraps)."""
+        with self.lock:
+            base = (self.root // 12) * 12
+            self.root = base + ((self.root + 1) % 12)
+
+    def cycle_pulses(self) -> None:
+        """Tap-cycle euclid density 0..steps (wraps), regenerating the grid."""
+        with self.lock:
+            self.pulses = (self.pulses + 1) % (self.steps + 1)
+            self._pattern = [float(v) for v in _euclid(self.pulses, self.steps)]
+
+    def cycle_mode(self) -> None:
+        with self.lock:
+            self.mode_idx = (self.mode_idx + 1) % len(MODES)
+            self._walk = len(SCALES[self.scale_idx][1])  # reset walk mid-range
+
+    def cycle_scale(self) -> None:
+        with self.lock:
+            self.scale_idx = (self.scale_idx + 1) % len(SCALES)
+
+    def snapshot(self) -> dict:
+        with self.lock:
+            return {
+                "running": self.running, "tempo": self.tempo, "peers": self.peers,
+                "steps": self.steps, "pulses": self.pulses, "root": self.root,
+                "step": self._step, "pattern": list(self._pattern), "fired": self._fired,
+                "mode": MODES[self.mode_idx], "scale": SCALES[self.scale_idx][0],
+                "gate": self.gate, "fill": self.fill,
+            }
+
     # -- note choice ---------------------------------------------------
 
-    def _note_for_hit(self, hit: int) -> int:
+    def _notes_for_hit(self, hit: int) -> list[int]:
         scale = SCALES[self.scale_idx][1]
         n = len(scale)
         mode = MODES[self.mode_idx]
+
+        def at(deg, octv):
+            return self.root + scale[deg % n] + 12 * octv
+
+        if mode == "FLAT":
+            return [self.root]
+        if mode == "CHORD":
+            return [at(0, 0), at(2, 0), at(4, 0)]
+        if mode == "WALK":
+            self._walk = max(0, min(n * 3 - 1, self._walk + random.choice([-1, -1, 0, 1, 1])))
+            return [self.root + scale[self._walk % n] + 12 * (self._walk // n)]
         if mode == "DOWN":
-            deg = (n - 1) - (hit % n)
-            octv = 2 - (hit // n) % 3
-        elif mode == "ARP":
+            return [at((n - 1) - (hit % n), 2 - (hit // n) % 3)]
+        if mode == "ARP":
             seq = list(range(n)) + list(range(n - 2, 0, -1))
-            deg = seq[hit % len(seq)]
-            octv = (hit // len(seq)) % 2
-        elif mode == "RND":
-            deg = random.randrange(n)
-            octv = random.randrange(3)
-        else:  # UP
-            deg = hit % n
-            octv = (hit // n) % 3
-        return self.root + scale[deg] + 12 * octv
+            return [at(seq[hit % len(seq)], (hit // len(seq)) % 2)]
+        if mode == "RND":
+            return [at(random.randrange(n), random.randrange(3))]
+        return [at(hit % n, (hit // n) % 3)]  # UP
 
     # -- transport -----------------------------------------------------
 
@@ -216,8 +287,6 @@ class GenEngine:
             except Exception:
                 pass
 
-    # -- helpers -------------------------------------------------------
-
     def _on(self, note: int) -> None:
         if self._midi:
             try:
@@ -232,6 +301,11 @@ class GenEngine:
             except Exception:
                 pass
 
+    def _fires(self, prob: float) -> bool:
+        if self.fill:
+            return True   # roll every 16th while FILL is held
+        return prob > 0 and (prob >= 1.0 or random.random() < prob)
+
     # -- clock thread (Link phase-locked) ------------------------------
 
     def _run(self) -> None:
@@ -241,7 +315,7 @@ class GenEngine:
             return
         clock = link.clock()
         last16 = None
-        held: tuple[int, int] | None = None  # (note, off_micros)
+        held: tuple[list[int], int] | None = None  # (notes, off_micros)
         while not self._stop.is_set():
             now = clock.micros()
             state = link.captureSessionState()
@@ -249,30 +323,39 @@ class GenEngine:
             with self.lock:
                 self.tempo = tempo
                 self.peers = link.numPeers()
-            beat = state.beatAtTime(now, QUANTUM)
-            sixteenth = int(beat * 4)
+            sixteenth = int(state.beatAtTime(now, QUANTUM) * 4)
             if held is not None and now >= held[1]:
-                self._off(held[0])
+                for nt in held[0]:
+                    self._off(nt)
                 held = None
             if sixteenth != last16:
                 last16 = sixteenth
                 with self.lock:
                     idx = sixteenth % self.steps
-                    hit = self._pattern[idx] if idx < len(self._pattern) else 0
+                    prob = self._pattern[idx] if idx < len(self._pattern) else 0.0
                     self._step = idx
                     gate = self.gate
-                if hit:
-                    note = self._note_for_hit(self._hit)
+                fires = self._fires(prob)
+                with self.lock:
+                    self._fired = fires
+                if fires:
+                    notes = self._notes_for_hit(self._hit)
                     if held is not None:
-                        self._off(held[0])
-                    self._on(note)
-                    dur_us = int(60.0 / max(tempo, 1.0) / 4.0 * gate * 1_000_000)
-                    held = (note, now + dur_us)
+                        for nt in held[0]:
+                            self._off(nt)
+                    for nt in notes:
+                        self._on(nt)
+                    if gate >= 1.0:
+                        held = (notes, now + 3_600_000_000)  # HOLD: legato, off'd by the next note
+                    else:
+                        dur_us = int(60.0 / max(tempo, 1.0) / 4.0 * gate * 1_000_000)
+                        held = (notes, now + dur_us)
                     with self.lock:
                         self._hit += 1
             self._stop.wait(0.005)
         if held is not None:
-            self._off(held[0])
+            for nt in held[0]:
+                self._off(nt)
 
     def _run_freewheel(self) -> None:
         """Fallback clock if Ableton Link is unavailable (no tempo sync)."""
@@ -281,20 +364,35 @@ class GenEngine:
             with self.lock:
                 step_sec = 60.0 / max(self.tempo, 1.0) / 4.0
                 idx = step % self.steps
-                hit = self._pattern[idx] if idx < len(self._pattern) else 0
+                prob = self._pattern[idx] if idx < len(self._pattern) else 0.0
                 self._step = idx
                 gate = self.gate
-            note = self._note_for_hit(self._hit) if hit else None
-            if note is not None:
-                self._on(note)
+            fires = self._fires(prob)
+            with self.lock:
+                self._fired = fires
+            notes = self._notes_for_hit(self._hit) if fires else []
+            for nt in notes:
+                self._on(nt)
+            if notes:
                 with self.lock:
                     self._hit += 1
             self._stop.wait(step_sec * gate)
-            if note is not None:
-                self._off(note)
+            for nt in notes:
+                self._off(nt)
             self._stop.wait(step_sec * (1.0 - gate))
             step += 1
 
 
-# Module-level singleton — survives page flips.
-engine = GenEngine()
+# Voices — independent generators, each on its own MIDI channel, all
+# phase-locked to the same Ableton Link session. Survive page flips.
+VOICES = {
+    "A": GenEngine(channel=0, name="A", root=48),   # melody
+    "B": GenEngine(channel=1, name="B", root=36),   # bass
+    "C": GenEngine(channel=2, name="C", root=60),   # high / perc
+}
+VOICES["B"].mode_idx = MODES.index("FLAT")          # bass = steady root by default
+VOICE_KEYS = ["A", "B", "C"]
+engine = VOICES["A"]  # back-compat default
+
+def any_playing() -> bool:
+    return any(v.running for v in VOICES.values())
