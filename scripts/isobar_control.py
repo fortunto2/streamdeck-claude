@@ -80,7 +80,8 @@ class IsobarControl(ControlSurface):
 
     # -- rendering -----------------------------------------------------
 
-    def _step_img(self, in_range: bool, prob: float, playhead: bool, fired: bool) -> Image.Image:
+    def _step_img(self, in_range: bool, prob: float, playhead: bool,
+                  fired: bool, ratchet: int = 1) -> Image.Image:
         if not in_range:
             return deck_ui.btn("#0b0f1a", [])
         full = prob >= 0.99
@@ -98,19 +99,28 @@ class IsobarControl(ControlSurface):
             bg, dot, r = "#0f172a", "#1e293b", 11
         img = Image.new("RGB", deck_ui.SIZE, bg)
         d = ImageDraw.Draw(img)
-        d.ellipse([48 - r, 48 - r, 48 + r, 48 + r], fill=dot)
+        if ratchet > 1 and (full or (playhead and fired)):
+            rr, gap = 11, 26                         # a row of dots = sub-hits
+            x0 = 48 - (ratchet - 1) * gap / 2.0
+            for k in range(ratchet):
+                cx = int(x0 + k * gap)
+                d.ellipse([cx - rr, 48 - rr, cx + rr, 48 + rr], fill=dot)
+        else:
+            d.ellipse([48 - r, 48 - r, 48 + r, 48 + r], fill=dot)
         return img
 
     def _paint_grid(self, snap: dict) -> None:
         steps = snap["steps"]
         pattern = snap["pattern"]
+        ratchets = snap.get("ratchet", {})
         playhead = snap["step"] if snap["running"] else -1
         fired = snap.get("fired", False)
         for i in GRID:
             in_range = i < steps
             prob = pattern[i] if (in_range and i < len(pattern)) else 0.0
+            rr = ratchets.get(i, ratchets.get(str(i), 1))
             ph = (i == playhead)
-            self.set_key(i, self._step_img(in_range, prob, ph, ph and fired))
+            self.set_key(i, self._step_img(in_range, prob, ph, ph and fired, rr))
 
     def render(self) -> None:
         if not self.running:

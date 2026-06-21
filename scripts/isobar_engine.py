@@ -129,6 +129,8 @@ class GenEngine:
         self.scale_idx = 0
         # Per-step trigger probability in [0,1]; 1=hit, 0.5=ghost, 0=rest.
         self._pattern: list[float] = [float(v) for v in _euclid(self.pulses, self.steps)]
+        # Per-step ratchet: step index -> sub-hit count (2 or 3). Absent = 1.
+        self._ratchet: dict[int, int] = {}
         self._step = 0
         self._hit = 0
         self._fired = False     # did the current step actually trigger a note
@@ -176,6 +178,7 @@ class GenEngine:
             self.steps = max(1, min(16, n))
             self.pulses = min(self.pulses, self.steps)
             self._pattern = [float(v) for v in _euclid(self.pulses, self.steps)]
+            self._ratchet = {i: r for i, r in self._ratchet.items() if i < self.steps}
 
     def set_pulses(self, k: int) -> None:
         with self.lock:
@@ -183,11 +186,29 @@ class GenEngine:
             self._pattern = [float(v) for v in _euclid(self.pulses, self.steps)]
 
     def toggle_step(self, i: int) -> None:
-        """Tap a cell: cycle off → hit → ghost(50%) → off."""
+        """Tap a cell: cycle off → hit → ghost(50%) → roll×2 → roll×3 → off.
+
+        The two roll states are ratchets — the step retriggers 2 or 3 times
+        within its 16th (a sub-hit burst / drum roll)."""
         with self.lock:
-            if 0 <= i < len(self._pattern):
-                cur = self._pattern[i]
-                self._pattern[i] = {0.0: 1.0, 1.0: 0.5}.get(cur, 0.0)
+            if not (0 <= i < len(self._pattern)):
+                return
+            p = self._pattern[i]
+            r = self._ratchet.get(i, 1)
+            if p <= 0:                       # off → hit
+                self._pattern[i] = 1.0
+                self._ratchet.pop(i, None)
+            elif p >= 1.0 and r == 1:        # hit → ghost
+                self._pattern[i] = 0.5
+                self._ratchet.pop(i, None)
+            elif 0 < p < 1.0:                # ghost → roll×2
+                self._pattern[i] = 1.0
+                self._ratchet[i] = 2
+            elif r == 2:                     # roll×2 → roll×3
+                self._ratchet[i] = 3
+            else:                            # roll×3 → off
+                self._pattern[i] = 0.0
+                self._ratchet.pop(i, None)
 
     def randomize(self) -> None:
         """Dice — reroll the rhythm, same hit count, random placement."""
@@ -198,6 +219,7 @@ class GenEngine:
             for i in random.sample(range(n), k):
                 pat[i] = 1.0
             self._pattern = pat
+            self._ratchet.clear()       # placement rerolled — drop ratchets
 
     def mutate(self) -> None:
         """Nudge one random step to a *different* state — gradual evolution."""
@@ -210,6 +232,7 @@ class GenEngine:
     def clear_pattern(self) -> None:
         with self.lock:
             self._pattern = [0.0] * self.steps
+            self._ratchet.clear()
 
     def rotate(self, d: int) -> None:
         """Shift the whole pattern around the circle (instant variation)."""
@@ -218,6 +241,7 @@ class GenEngine:
             if n:
                 d %= n
                 self._pattern = self._pattern[-d:] + self._pattern[:-d]
+                self._ratchet = {(i + d) % n: r for i, r in self._ratchet.items()}
 
     def cycle_gate(self) -> None:
         """Cycle note length: short → med → long → HOLD (legato/sustain)."""
@@ -269,7 +293,7 @@ class GenEngine:
                 "steps": self.steps, "pulses": self.pulses, "root": self.root,
                 "step": self._step, "pattern": list(self._pattern), "fired": self._fired,
                 "mode": MODES[self.mode_idx], "scale": SCALES[self.scale_idx][0],
-                "gate": self.gate, "fill": self.fill,
+                "gate": self.gate, "fill": self.fill, "ratchet": dict(self._ratchet),
             }
 
     # -- save / restore ------------------------------------------------
@@ -278,7 +302,8 @@ class GenEngine:
         with self.lock:
             return {"steps": self.steps, "pulses": self.pulses, "root": self.root,
                     "gate": self.gate, "mode_idx": self.mode_idx,
-                    "scale_idx": self.scale_idx, "pattern": list(self._pattern)}
+                    "scale_idx": self.scale_idx, "pattern": list(self._pattern),
+                    "ratchet": {str(i): r for i, r in self._ratchet.items()}}
 
     def set_state(self, s: dict) -> None:
         with self.lock:
@@ -291,6 +316,10 @@ class GenEngine:
             pat = s.get("pattern")
             if isinstance(pat, list):
                 self._pattern = [float(x) for x in pat]
+            rat = s.get("ratchet")
+            if isinstance(rat, dict):
+                self._ratchet = {int(i): int(r) for i, r in rat.items()
+                                 if int(r) > 1 and int(i) < self.steps}
 
     # -- note choice ---------------------------------------------------
 
@@ -401,7 +430,7 @@ class GenEngine:
         clock = link.clock()
         qb = int(QUANTUM * 4)   # sixteenths per bar (launch quantum)
         last16 = None
-        held: tuple[list[int], int] | None = None  # (notes, off_micros)
+        sched: list[list] = []  # each: [notes, on_us, off_us, started]
         ending = False
         while not self._stop.is_set() and not ending:
             now = clock.micros()
@@ -411,10 +440,19 @@ class GenEngine:
                 self.tempo = tempo
                 self.peers = link.numPeers()
             sixteenth = int(state.beatAtTime(now, QUANTUM) * 4)
-            if held is not None and now >= held[1]:
-                for nt in held[0]:
-                    self._off(nt)
-                held = None
+            # service scheduled (sub-)hits: start due notes, release expired ones
+            still = []
+            for it in sched:
+                if not it[3] and now >= it[1]:
+                    for nt in it[0]:
+                        self._on(nt)
+                    it[3] = True
+                if it[3] and now >= it[2]:
+                    for nt in it[0]:
+                        self._off(nt)
+                    continue
+                still.append(it)
+            sched = still
             if sixteenth != last16:
                 last16 = sixteenth
                 bar = (sixteenth % qb == 0)   # downbeat → arm / disarm here
@@ -430,6 +468,7 @@ class GenEngine:
                     armed = self.armed
                     idx = sixteenth % self.steps
                     prob = self._pattern[idx] if idx < len(self._pattern) else 0.0
+                    ratchet = self._ratchet.get(idx, 1)
                     self._step = idx
                     gate = self.gate
                 if not ending and armed:
@@ -438,25 +477,38 @@ class GenEngine:
                         self._fired = fires
                     if fires:
                         notes = self._notes_for_hit(self._hit)
-                        if held is not None:
-                            for nt in held[0]:
-                                self._off(nt)
-                        for nt in notes:
-                            self._on(nt)
-                        if gate >= 1.0:
-                            held = (notes, now + 3_600_000_000)  # HOLD: legato
-                        else:
-                            dur_us = int(60.0 / max(tempo, 1.0) / 4.0 * gate * 1_000_000)
-                            held = (notes, now + dur_us)
+                        for it in sched:               # cut anything still ringing
+                            if it[3]:
+                                for nt in it[0]:
+                                    self._off(nt)
+                        sched = []
+                        step_us = 60.0 / max(tempo, 1.0) / 4.0 * 1_000_000
+                        r = max(1, ratchet)
+                        if r == 1:
+                            for nt in notes:
+                                self._on(nt)
+                            off_us = now + (3_600_000_000 if gate >= 1.0
+                                            else int(step_us * gate))
+                            sched.append([notes, now, off_us, True])
+                        else:                          # ratchet — r staccato sub-hits
+                            sub = step_us / r
+                            dur = int(sub * 0.6)
+                            for k in range(r):
+                                on_us = now + int(k * sub)
+                                if k == 0:
+                                    for nt in notes:
+                                        self._on(nt)
+                                sched.append([notes, on_us, on_us + dur, k == 0])
                         with self.lock:
                             self._hit += 1
                 else:
                     with self.lock:
                         self._fired = False
-            self._stop.wait(0.005)
-        if held is not None:
-            for nt in held[0]:
-                self._off(nt)
+            self._stop.wait(0.004)
+        for it in sched:
+            if it[3]:
+                for nt in it[0]:
+                    self._off(nt)
         with self.lock:
             self.running = False
             self.armed = False
