@@ -12,10 +12,30 @@ from __future__ import annotations
 
 import threading
 
-from isobar_engine import _get_link, _get_midi, QUANTUM
+from isobar_engine import _get_link, _get_midi, QUANTUM, VOICES
 
 N_STEPS = 16
 CH = 9   # GM drums = MIDI channel 10
+
+# A drum lane can be driven by its own step pattern, or follow a GEN voice's
+# rhythm (so the generator's euclidean/evolving pattern plays a drum sound).
+SRC_CYCLE = [None, "A", "B", "C", "D", "E", "F"]
+
+# Built-in grooves (lane → steps). Lanes: 0 Kick 1 Rim 2 Snare 3 Clap
+# 4 LoConga 5 MidConga 6 HatC 7 HiConga 8 LoTom 9 MidTom 10 HatO 11 HiTom
+# 12 Maracas 13 Cymbal 14 CowBell 15 Claves.
+BEATS = [
+    ("house",   {0: [0, 4, 8, 12], 6: [2, 6, 10, 14], 3: [4, 12]}),
+    ("4floor",  {0: [0, 4, 8, 12], 6: list(range(0, 16, 2)), 2: [4, 12]}),
+    ("boombap", {0: [0, 3, 8, 11], 2: [4, 12], 6: list(range(0, 16, 2))}),
+    ("trap",    {0: [0, 7, 10], 2: [8], 6: [0, 2, 4, 6, 8, 9, 10, 12, 13, 14]}),
+    ("techno",  {0: [0, 4, 8, 12], 10: [2, 6, 10, 14], 1: [8]}),
+    ("kino",    {0: [0, 4, 8, 12], 2: [4, 12], 6: list(range(16)), 14: [2, 10]}),
+    ("joydiv",  {0: [0, 8], 9: [2, 6, 14], 8: [10], 2: [4, 12]}),
+    ("breaks",  {0: [0, 10], 2: [4, 7, 12], 6: list(range(0, 16, 2))}),
+    ("funk",    {0: [0, 6, 10], 2: [4, 12], 6: list(range(16)), 1: [2, 14]}),
+    ("electro", {0: [0, 8], 2: [4, 12], 14: list(range(0, 16, 2)), 3: [6, 14]}),
+]
 
 # All 16 Drum-Rack lanes (Ableton 4×4: Bass Drum = C1 = 36, chromatic up).
 # (name, GM note) — colour/grouping is applied by the control surface.
@@ -37,6 +57,7 @@ class DrumMachine:
         self.channel = CH
         self._step = 0
         self.patterns = [[0] * N_STEPS for _ in DRUMS]
+        self.source = [None] * len(DRUMS)   # per-lane: None or a GEN voice key
         # A simple default groove so it's immediately useful.
         for s in (0, 4, 8, 12):
             self.patterns[0][s] = 1                 # Kick (lane 0) — four on the floor
@@ -68,11 +89,31 @@ class DrumMachine:
     def clear_all(self) -> None:
         with self.lock:
             self.patterns = [[0] * N_STEPS for _ in DRUMS]
+            self.source = [None] * len(DRUMS)
+
+    def cycle_source(self, lane: int) -> None:
+        """Link a lane to a GEN voice's rhythm (off → A … F → off)."""
+        with self.lock:
+            if 0 <= lane < len(self.source):
+                cur = self.source[lane]
+                i = SRC_CYCLE.index(cur) if cur in SRC_CYCLE else 0
+                self.source[lane] = SRC_CYCLE[(i + 1) % len(SRC_CYCLE)]
+
+    def load_beat(self, mapping: dict) -> None:
+        with self.lock:
+            self.patterns = [[0] * N_STEPS for _ in DRUMS]
+            self.source = [None] * len(DRUMS)
+            for lane, steps in mapping.items():
+                if 0 <= lane < len(DRUMS):
+                    for s in steps:
+                        if 0 <= s < N_STEPS:
+                            self.patterns[lane][s] = 1
 
     def snapshot(self) -> dict:
         with self.lock:
             return {"running": self.running, "armed": self.armed, "pending": self.pending,
-                    "step": self._step, "patterns": [list(p) for p in self.patterns]}
+                    "step": self._step, "patterns": [list(p) for p in self.patterns],
+                    "source": list(self.source)}
 
     # -- transport (bar-quantised, same as the voices) -----------------
 
@@ -151,8 +192,16 @@ class DrumMachine:
                     armed = self.armed
                     step = sixteenth % N_STEPS
                     self._step = step
-                    hits = [DRUMS[i][1] for i in range(len(DRUMS)) if self.patterns[i][step]]
+                    lane_state = [(self.patterns[i][step], self.source[i]) for i in range(len(DRUMS))]
                 if not ending and armed:
+                    hits = []
+                    for i, (on_local, src) in enumerate(lane_state):
+                        if src is not None:   # follow a GEN voice's rhythm
+                            sv = VOICES.get(src)
+                            if sv is not None and sv.step_prob(sixteenth) > 0:
+                                hits.append(DRUMS[i][1])
+                        elif on_local:
+                            hits.append(DRUMS[i][1])
                     for note in hits:
                         self._on(note)
                         held.append((note, now + 25_000))   # 25 ms one-shot

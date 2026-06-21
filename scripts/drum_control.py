@@ -17,13 +17,16 @@ from PIL import Image, ImageDraw
 import deck_ui
 from control_surface import ControlSurface
 
-from drum_engine import machine, DRUMS, N_STEPS
+from drum_engine import machine, DRUMS, N_STEPS, BEATS
+from isobar_engine import VOICES
 
 VOICE_ROW = range(0, 8)
 STEP_ROW = range(8, 24)
 KEY_PLAY = 24
 KEY_CLEAR = 25
 KEY_CLEAR_ALL = 26
+KEY_BEAT = 27      # cycle a built-in groove
+KEY_SRC = 28       # link the active lane to a GEN voice's rhythm
 KEY_HOME = ControlSurface.HOME_KEY  # 31
 FPS = 14.0
 
@@ -46,6 +49,7 @@ class DrumControl(ControlSurface):
         super().__init__(deck, on_home)
         self.group = 0
         self.lane_sel = [0] * len(GROUPS)   # selected lane within each group
+        self.beat_idx = 0
         self._poll_thread: threading.Thread | None = None
 
     def start(self) -> None:
@@ -96,10 +100,20 @@ class DrumControl(ControlSurface):
 
     def _paint_steps(self, snap: dict) -> None:
         step = snap["step"] if (snap["running"] and snap["armed"]) else -1
-        color = GROUPS[self.group][2]
-        row = snap["patterns"][self.active_lane()]
-        for i in range(N_STEPS):
-            self.set_key(STEP_ROW.start + i, self._step_img(bool(row[i]), i == step, color, i % 4 == 0))
+        lane = self.active_lane()
+        src = snap["source"][lane]
+        if src is not None and src in VOICES:
+            # Lane follows a GEN voice — show that rhythm (read-only, lilac).
+            gp = VOICES[src].snapshot()["pattern"]
+            n = len(gp) or 1
+            for i in range(N_STEPS):
+                on = gp[i % n] > 0
+                self.set_key(STEP_ROW.start + i, self._step_img(on, i == step, "#a78bfa", i % 4 == 0))
+        else:
+            color = GROUPS[self.group][2]
+            row = snap["patterns"][lane]
+            for i in range(N_STEPS):
+                self.set_key(STEP_ROW.start + i, self._step_img(bool(row[i]), i == step, color, i % 4 == 0))
 
     def _paint_voices(self, snap: dict) -> None:
         for g, (_label, lanes, color) in enumerate(GROUPS):
@@ -121,10 +135,17 @@ class DrumControl(ControlSurface):
         self._paint_voices(snap)
         self._paint_steps(snap)
         self.set_key(KEY_PLAY, self._play_img(snap))
+        lane = self.active_lane()
         self.set_key(KEY_CLEAR, deck_ui.btn("#7f1d1d", [("CLEAR", 13, "#fecaca"),
-                                                        (DRUMS[self.active_lane()][0], 9, "#f87171")]))
+                                                        (DRUMS[lane][0], 9, "#f87171")]))
         self.set_key(KEY_CLEAR_ALL, deck_ui.btn("#450a0a", [("CLEAR", 13, "#fecaca"), ("all", 9, "#f87171")]))
-        for k in (27, 28, 29, 30):
+        self.set_key(KEY_BEAT, deck_ui.btn("#0f766e", [("BEAT ↻", 10, "#99f6e4"),
+                                                       (BEATS[self.beat_idx][0], 14, "#fff")]))
+        src = snap["source"][lane]
+        self.set_key(KEY_SRC, deck_ui.btn("#5b21b6" if src else "#1f2937",
+                                          [("SRC ↻", 10, "#ddd6fe"),
+                                           (f"GEN {src}" if src else "off", 14, "#fff" if src else "#9ca3af")]))
+        for k in (29, 30):
             self.set_key(k, deck_ui.btn("#0b0f1a", []))
         self.render_home_key()
 
@@ -142,8 +163,10 @@ class DrumControl(ControlSurface):
                 self.group = key
             self.render()
         elif key in STEP_ROW:
-            machine.toggle_step(self.active_lane(), key - STEP_ROW.start)
-            self.render()
+            lane = self.active_lane()
+            if machine.snapshot()["source"][lane] is None:   # GEN-driven lanes are read-only
+                machine.toggle_step(lane, key - STEP_ROW.start)
+                self.render()
         elif key == KEY_PLAY:
             machine.toggle()
             self.render()
@@ -152,4 +175,11 @@ class DrumControl(ControlSurface):
             self.render()
         elif key == KEY_CLEAR_ALL:
             machine.clear_all()
+            self.render()
+        elif key == KEY_BEAT:
+            self.beat_idx = (self.beat_idx + 1) % len(BEATS)
+            machine.load_beat(BEATS[self.beat_idx][1])
+            self.render()
+        elif key == KEY_SRC:
+            machine.cycle_source(self.active_lane())
             self.render()

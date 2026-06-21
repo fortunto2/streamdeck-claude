@@ -253,6 +253,13 @@ class GenEngine:
         with self.lock:
             self.scale_idx = (self.scale_idx + 1) % len(SCALES)
 
+    def step_prob(self, global_step: int) -> float:
+        """Probability at a global 16th index (for the drum machine to read
+        this voice's rhythm). Loops over the voice's own step count."""
+        with self.lock:
+            n = len(self._pattern)
+            return self._pattern[global_step % n] if n else 0.0
+
     def snapshot(self) -> dict:
         with self.lock:
             return {
