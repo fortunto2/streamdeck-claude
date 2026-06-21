@@ -26,16 +26,37 @@ SRC_CYCLE = [None, "A", "B", "C", "D", "E", "F"]
 # 4 LoConga 5 MidConga 6 HatC 7 HiConga 8 LoTom 9 MidTom 10 HatO 11 HiTom
 # 12 Maracas 13 Cymbal 14 CowBell 15 Claves.
 BEATS = [
-    ("house",   {0: [0, 4, 8, 12], 6: [2, 6, 10, 14], 3: [4, 12]}),
-    ("4floor",  {0: [0, 4, 8, 12], 6: list(range(0, 16, 2)), 2: [4, 12]}),
-    ("boombap", {0: [0, 3, 8, 11], 2: [4, 12], 6: list(range(0, 16, 2))}),
-    ("trap",    {0: [0, 7, 10], 2: [8], 6: [0, 2, 4, 6, 8, 9, 10, 12, 13, 14]}),
-    ("techno",  {0: [0, 4, 8, 12], 10: [2, 6, 10, 14], 1: [8]}),
-    ("kino",    {0: [0, 4, 8, 12], 2: [4, 12], 6: list(range(16)), 14: [2, 10]}),
-    ("joydiv",  {0: [0, 8], 9: [2, 6, 14], 8: [10], 2: [4, 12]}),
-    ("breaks",  {0: [0, 10], 2: [4, 7, 12], 6: list(range(0, 16, 2))}),
-    ("funk",    {0: [0, 6, 10], 2: [4, 12], 6: list(range(16)), 1: [2, 14]}),
-    ("electro", {0: [0, 8], 2: [4, 12], 14: list(range(0, 16, 2)), 3: [6, 14]}),
+    ("house", {     # club kick + clap, "tss" open hats, shaker drive, conga color
+        0: [0, 4, 8, 12], 3: [4, 12], 6: [0, 4, 8, 12], 10: [2, 6, 10, 14],
+        12: list(range(16)), 5: [7, 15]}),
+    ("4floor", {    # relentless tech: 8th hats, rim ghost, claves, lift
+        0: [0, 4, 8, 12], 2: [4, 12], 6: [0, 2, 4, 6, 8, 10, 12],
+        1: [8], 10: [14], 15: [2, 10]}),
+    ("boombap", {   # swung kick, backbeat, ghost rim, conga, open-hat lift
+        0: [0, 3, 8, 11], 2: [4, 12], 1: [7, 15], 6: [0, 2, 4, 6, 8, 10, 12],
+        10: [14], 4: [6]}),
+    ("trap", {      # sparse 808 kick, hat rolls, cowbell, maracas
+        0: [0, 7, 10], 2: [8], 6: [0, 2, 4, 6, 8, 9, 10, 12, 13, 14],
+        10: [15], 14: [3, 11], 12: [1, 5, 9, 13]}),
+    ("techno", {    # 4-floor, open offbeats + 8th closed, cowbell, rim
+        0: [0, 4, 8, 12], 6: [0, 4, 8, 12], 10: [2, 6, 10, 14],
+        1: [8], 14: [7, 15], 3: [12]}),
+    ("kino", {      # post-punk drive: 16th hats, cowbell, tom fill, shaker
+        0: [0, 4, 8, 12], 2: [4, 12], 6: list(range(16)), 14: [2, 10],
+        9: [14, 15], 12: [0, 4, 8, 12]}),
+    ("joydiv", {    # iconic tom-led groove across all three toms + cymbal
+        0: [0, 8], 2: [4, 12], 9: [2, 6, 10, 14], 8: [3, 11],
+        11: [7], 13: [0]}),
+    ("breaks", {    # chopped break: kick/snare hits, hats, ghost rim, maracas
+        0: [0, 10], 2: [4, 7, 12], 6: [0, 4, 6, 8, 10, 12],
+        10: [2, 14], 1: [9, 15], 12: [1, 5, 11]}),
+    ("funk", {      # syncopated kick, ghost rim, 16th hats, cowbell anchor
+        0: [0, 6, 10], 2: [4, 12], 1: [2, 7, 14],
+        6: [0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15],
+        10: [3, 11], 14: [0, 8]}),
+    ("electro", {   # Kraftwerk: cowbell 8ths, claves, clap-doubled snare
+        0: [0, 8], 2: [4, 12], 3: [4, 12], 14: list(range(0, 16, 2)),
+        15: [2, 6, 10, 14], 10: [7, 15]}),
 ]
 
 # All 16 Drum-Rack lanes (Ableton 4×4: Bass Drum = C1 = 36, chromatic up).
