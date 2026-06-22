@@ -19,6 +19,8 @@ from __future__ import annotations
 import threading
 import time
 
+from PIL import Image, ImageDraw
+
 import deck_ui
 from control_surface import ControlSurface
 from src.ableton import AbletonClient
@@ -47,6 +49,10 @@ class SessionLooper(ControlSurface):
         self._press_t: dict[int, float] = {}
         self._auto = True
         self._was_rec: dict[tuple[int, int], bool] = {}
+        # Tiny waveform per clip: (t,s) -> (file_path, [0..1 envelope]).
+        self._wave: dict[tuple[int, int], tuple] = {}
+        self._wave_lock = threading.Lock()
+        self._wave_pending: set[tuple[int, int]] = set()
 
     def start(self) -> None:
         self.running = True
@@ -113,6 +119,50 @@ class SessionLooper(ControlSurface):
         r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
         return "#%02x%02x%02x" % (int(r * f), int(g * f), int(b * f))
 
+    def _wave_get(self, t: int, s: int):
+        """Cached envelope for a clip; kicks off an async read if stale."""
+        path = self.client.state.slot_file_path.get((t, s))
+        if not path:
+            self.client._send("/live/clip/get/file_path", t, s)
+            return None
+        with self._wave_lock:
+            cached = self._wave.get((t, s))
+        if cached and cached[0] == path:
+            return cached[1]
+        if (t, s) not in self._wave_pending:
+            self._wave_pending.add((t, s))
+            threading.Thread(target=self._compute_wave, args=(t, s, path), daemon=True).start()
+        return cached[1] if cached else None
+
+    def _compute_wave(self, t: int, s: int, path: str) -> None:
+        try:
+            import audio_trim
+            env = audio_trim.waveform(path)
+        except Exception:
+            env = None
+        with self._wave_lock:
+            if env:
+                self._wave[(t, s)] = (path, env)
+            self._wave_pending.discard((t, s))
+
+    def _wave_img(self, env, color: str, playing: bool, queued: bool):
+        img = Image.new("RGB", deck_ui.SIZE, "#10161f" if playing else "#0b0f1a")
+        d = ImageDraw.Draw(img)
+        if env:
+            wc = color if playing else self._dim(color, 0.55)
+            n = len(env)
+            bw = 96.0 / n
+            for i, v in enumerate(env):
+                x = i * bw
+                h = int(v * 40) + 1
+                d.rectangle([x, 48 - h, x + bw + 0.6, 48 + h], fill=wc)
+        if playing:
+            d.rectangle([0, 0, 95, 95], outline="#ffffff", width=4)
+            d.polygon([(8, 36), (8, 60), (26, 48)], fill="#ffffff")   # ▶
+        elif queued and int(time.monotonic() * 2) % 2:
+            d.rectangle([0, 0, 95, 95], outline=color, width=4)
+        return img
+
     def _cell_img(self, t: int, s: int):
         st = self.client.state
         with st.lock:
@@ -130,12 +180,8 @@ class SessionLooper(ControlSurface):
         if not has:
             return deck_ui.btn(self._dim(self._hex(tcolor), 0.22), [("+", 26, "#64748b")])
         base = self._hex(color or tcolor)
-        if trig and not playing:
-            blink = int(time.monotonic() * 2) % 2
-            return deck_ui.btn(base if blink else "#1f2937", [("▷", 20, "#fff")])
-        if playing:
-            return deck_ui.btn(base, [("▶", 20, "#0b0f1a")], border="#ffffff")
-        return deck_ui.btn(self._dim(base), [("■", 16, "#cbd5e1")])
+        env = self._wave_get(t, s)
+        return self._wave_img(env, base, playing, trig and not playing)
 
     def render(self) -> None:
         if not self.running:

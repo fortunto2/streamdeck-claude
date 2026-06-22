@@ -64,6 +64,28 @@ def content_bounds(path: str, floor_pct: float = 20.0, margin_db: float = 10.0,
 content_bounds.info = ""
 
 
+def waveform(path: str, points: int = 46):
+    """Downsampled peak envelope (list of 0..1) for drawing a tiny waveform on
+    a deck key. None if it can't read the file."""
+    if np is None or sf is None:
+        return None
+    try:
+        y, sr = sf.read(path, dtype="float32", always_2d=True)
+    except Exception:
+        return None
+    mono = np.abs(y.mean(axis=1))
+    n = len(mono)
+    step = max(1, n // points)
+    nb = n // step
+    if nb < 1:
+        return None
+    env = mono[:nb * step].reshape(nb, step).max(axis=1)
+    peak = float(env.max())
+    if peak <= 0.0:
+        return [0.0] * nb
+    return [float(x) for x in (env / peak)]
+
+
 if __name__ == "__main__":
     import sys
     r = content_bounds(sys.argv[1])
