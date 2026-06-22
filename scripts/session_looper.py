@@ -92,7 +92,8 @@ class SessionLooper(ControlSurface):
             playing = st.slot_playing.get((t, s), False)
             trig = st.slot_triggered.get((t, s), False)
             rec = st.slot_recording.get((t, s), False)
-            color = st.slot_color.get((t, s)) or st.track_color.get(t)
+            color = st.slot_color.get((t, s))
+            tcolor = st.track_color.get(t)
             ntracks = st.num_tracks
         blink = int(time.monotonic() * 2) % 2
         if t >= ntracks:
@@ -100,8 +101,9 @@ class SessionLooper(ControlSurface):
         if rec:
             return deck_ui.btn("#dc2626" if blink else "#5c1212", [("●", 22, "#fff"), ("REC", 9, "#fecaca")])
         if not has:
-            return deck_ui.btn("#0e131c", [("+", 18, "#283246")])   # empty — tap to record
-        base = self._hex(color)
+            # empty, tap to record — faint track tint + a clearly visible +
+            return deck_ui.btn(self._dim(self._hex(tcolor), 0.22), [("+", 26, "#64748b")])
+        base = self._hex(color or tcolor)
         if trig and not playing:
             return deck_ui.btn(base if blink else "#1f2937", [("▷", 20, "#fff")])  # queued
         if playing:
@@ -118,9 +120,18 @@ class SessionLooper(ControlSurface):
             self.set_key(0, deck_ui.btn("#7f1d1d", [("no OSC", 12, "#fecaca")]))
             self.render_home_key()
             return
-        for s in range(ROWS):
-            for t in range(COLS):
-                self.set_key(s * 8 + t, self._cell_img(t, s))
+        with self.client.state.lock:
+            ntracks = self.client.state.num_tracks
+        if ntracks == 0:
+            for k in range(24):
+                self.set_key(k, deck_ui.btn("#0b0f1a", []))
+            self.set_key(0, deck_ui.btn("#1f2937", [("waiting", 11, "#cbd5e1"),
+                                                    ("for Live", 12, "#fff"),
+                                                    ("OSC…", 9, "#9ca3af")]))
+        else:
+            for s in range(ROWS):
+                for t in range(COLS):
+                    self.set_key(s * 8 + t, self._cell_img(t, s))
         # bottom row — scene launch + stop-all
         for i in range(3):
             self.set_key(24 + i, deck_ui.btn("#1e293b", [("SCENE", 9, "#94a3b8"),
