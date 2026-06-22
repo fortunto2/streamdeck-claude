@@ -83,6 +83,7 @@ class DrumMachine:
         self.ratchet: dict[tuple[int, int], int] = {}   # (lane, step) -> 2/3 sub-hits
         self.swing = 0.0      # 0..~0.25 — fraction of a 16th the off-beats lag
         self.accent = False   # dynamics: downbeat accents + humanise + soft ghosts
+        self._stash = None    # quick live snapshot (hold to save, tap to recall)
         # A simple default groove so it's immediately useful.
         for s in (0, 4, 8, 12):
             self.patterns[0][s] = 1                 # Kick (lane 0) — four on the floor
@@ -163,6 +164,18 @@ class DrumMachine:
         if sub > 0:
             v = int(v * 0.6)                     # ratchet repeats are ghosts
         return max(1, min(127, v))
+
+    def stash(self) -> None:
+        """Remember the whole pattern (live A/B snapshot for drops)."""
+        self._stash = self.get_state()
+
+    def recall(self) -> None:
+        """Jump back to the last stashed pattern."""
+        if self._stash is not None:
+            self.set_state(self._stash)
+
+    def has_stash(self) -> bool:
+        return self._stash is not None
 
     def cycle_source(self, lane: int) -> None:
         """Link a lane to a GEN voice's rhythm (off → A … F → off)."""

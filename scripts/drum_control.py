@@ -23,8 +23,8 @@ from isobar_engine import VOICES
 VOICE_ROW = range(0, 8)
 STEP_ROW = range(8, 24)
 KEY_PLAY = 24
-KEY_CLEAR = 25
-KEY_CLEAR_ALL = 26
+KEY_CLEAR = 25     # tap = clear active lane, hold = clear all
+KEY_STASH = 26     # hold = remember pattern, tap = recall (live drop snapshot)
 KEY_BEAT = 27      # cycle a built-in groove
 KEY_SRC = 28       # link the active lane to a GEN voice's rhythm
 KEY_SWING = 29     # cycle swing amount
@@ -193,8 +193,13 @@ class DrumControl(ControlSurface):
         self.set_key(KEY_PLAY, self._play_img(snap))
         lane = self.active_lane()
         self.set_key(KEY_CLEAR, deck_ui.btn("#7f1d1d", [("CLEAR", 13, "#fecaca"),
-                                                        (DRUMS[lane][0], 9, "#f87171")]))
-        self.set_key(KEY_CLEAR_ALL, deck_ui.btn("#450a0a", [("CLEAR", 13, "#fecaca"), ("all", 9, "#f87171")]))
+                                                        (DRUMS[lane][0], 9, "#f87171"),
+                                                        ("hold=all", 8, "#9f5050")]))
+        stashed = machine.has_stash()
+        self.set_key(KEY_STASH, deck_ui.btn("#1d4ed8" if stashed else "#1f2937",
+                                            [("STASH", 13, "#dbeafe"),
+                                             ("tap recall" if stashed else "hold save", 9,
+                                              "#93c5fd" if stashed else "#9ca3af")]))
         self.set_key(KEY_BEAT, deck_ui.btn("#0f766e", [("BEAT ↻", 10, "#99f6e4"),
                                                        (BEATS[self.beat_idx][0], 14, "#fff")]))
         src = snap["source"][lane]
@@ -232,9 +237,24 @@ class DrumControl(ControlSurface):
             machine.hold_step(lane, step)
         self.render()
 
+    def _hold_button(self, key: int, pressed: bool) -> None:
+        """Tap vs hold for CLEAR (lane / all) and STASH (recall / save)."""
+        if pressed:
+            self._press_t[key] = time.monotonic()
+            return
+        held = (time.monotonic() - self._press_t.pop(key, time.monotonic())) >= LONG_PRESS
+        if key == KEY_CLEAR:
+            machine.clear_all() if held else machine.clear_voice(self.active_lane())
+        elif key == KEY_STASH:
+            machine.stash() if held else machine.recall()
+        self.render()
+
     def on_key(self, _deck, key: int, pressed: bool) -> None:
         if key in STEP_ROW:               # press+release handled (long-press detect)
             self._step_gesture(key, pressed)
+            return
+        if key in (KEY_CLEAR, KEY_STASH):
+            self._hold_button(key, pressed)
             return
         if not pressed:
             return
@@ -248,12 +268,6 @@ class DrumControl(ControlSurface):
             self.render()
         elif key == KEY_PLAY:
             machine.toggle()
-            self.render()
-        elif key == KEY_CLEAR:
-            machine.clear_voice(self.active_lane())
-            self.render()
-        elif key == KEY_CLEAR_ALL:
-            machine.clear_all()
             self.render()
         elif key == KEY_BEAT:
             self.beat_idx = (self.beat_idx + 1) % len(BEATS)
