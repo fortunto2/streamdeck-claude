@@ -150,6 +150,7 @@ class AbletonClient:
         disp.map("/live/clip_slot/get/is_triggered", self._h_slot_triggered)
         disp.map("/live/clip_slot/get/has_clip", self._h_slot_has_clip)
         disp.map("/live/clip/get/is_recording", self._h_clip_recording)
+        disp.map("/live/clip/get/is_playing", self._h_clip_playing)
         disp.map("/live/clip/get/color", self._h_clip_color)
         disp.map("/live/clip/get/file_path", self._h_clip_file_path)
         disp.map("/live/clip/get/loop_start", self._h_clip_loop_start)
@@ -255,7 +256,9 @@ class AbletonClient:
         self._slots_subscribed = True
         for s in range(ns):
             for t in range(nt):
-                self._send("/live/clip_slot/start_listen/is_playing", t, s)
+                # clip_slot.is_playing has no listener in some Live versions
+                # ('add_is_playing_listener' missing) — we use the CLIP's
+                # is_playing instead (subscribed lazily once a clip exists).
                 self._send("/live/clip_slot/start_listen/is_triggered", t, s)
                 self._send("/live/clip_slot/start_listen/has_clip", t, s)
 
@@ -363,6 +366,8 @@ class AbletonClient:
             # never poke empty slots, which would error in Live).
             self._send("/live/clip/start_listen/is_recording", t, s)
             self._send("/live/clip/get/is_recording", t, s)
+            self._send("/live/clip/start_listen/is_playing", t, s)   # reliable play state
+            self._send("/live/clip/get/is_playing", t, s)
             self._send("/live/clip/start_listen/color", t, s)
             self._send("/live/clip/get/color", t, s)
             self._send("/live/clip/get/file_path", t, s)   # for offline trim
@@ -378,6 +383,18 @@ class AbletonClient:
         with self.state.lock:
             changed = self.state.slot_recording.get(key) != v
             self.state.slot_recording[key] = v
+        if changed:
+            self._notify()
+
+    def _h_clip_playing(self, addr, *args):
+        self._touch()
+        if len(args) < 3:
+            return
+        key = (int(args[0]), int(args[1]))
+        v = bool(args[2])
+        with self.state.lock:
+            changed = self.state.slot_playing.get(key) != v
+            self.state.slot_playing[key] = v
         if changed:
             self._notify()
 
