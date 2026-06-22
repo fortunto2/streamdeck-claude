@@ -59,6 +59,10 @@ class SessionState:
         # Ableton-style "queued blinks / playing is solid" scene feedback.
         self.slot_playing: dict[tuple[int, int], bool] = {}
         self.slot_triggered: dict[tuple[int, int], bool] = {}
+        # Session-looper clip grid: occupied / recording / clip colour per slot.
+        self.slot_has_clip: dict[tuple[int, int], bool] = {}
+        self.slot_recording: dict[tuple[int, int], bool] = {}
+        self.slot_color: dict[tuple[int, int], int] = {}
         self.track_names: dict[int, str] = {}
         self.track_mute: dict[int, bool] = {}
         self.track_arm: dict[int, bool] = {}
@@ -139,6 +143,9 @@ class AbletonClient:
         disp.map("/live/scene/get/color", self._h_scene_color)
         disp.map("/live/clip_slot/get/is_playing", self._h_slot_playing)
         disp.map("/live/clip_slot/get/is_triggered", self._h_slot_triggered)
+        disp.map("/live/clip_slot/get/has_clip", self._h_slot_has_clip)
+        disp.map("/live/clip/get/is_recording", self._h_clip_recording)
+        disp.map("/live/clip/get/color", self._h_clip_color)
         disp.map("/live/song/get/beat", self._h_beat)
         disp.map("/live/song/get/signature_numerator", self._h_sig_num)
         disp.map("/live/song/get/signature_denominator", self._h_sig_denom)
@@ -239,6 +246,7 @@ class AbletonClient:
             for t in range(nt):
                 self._send("/live/clip_slot/start_listen/is_playing", t, s)
                 self._send("/live/clip_slot/start_listen/is_triggered", t, s)
+                self._send("/live/clip_slot/start_listen/has_clip", t, s)
 
     # -- handlers (notify only on real change to avoid repaint churn) ----
 
@@ -326,6 +334,55 @@ class AbletonClient:
                 self.state.slot_triggered[key] = v
             if changed:
                 self._notify()
+
+    def _h_slot_has_clip(self, addr, *args):
+        self._touch()
+        if len(args) < 3:
+            return
+        t, s = int(args[0]), int(args[1])
+        has = bool(args[2])
+        with self.state.lock:
+            changed = self.state.slot_has_clip.get((t, s)) != has
+            self.state.slot_has_clip[(t, s)] = has
+            if not has:
+                self.state.slot_recording.pop((t, s), None)
+                self.state.slot_color.pop((t, s), None)
+        if has:
+            # Clip appeared — watch its recording state + colour (lazy, so we
+            # never poke empty slots, which would error in Live).
+            self._send("/live/clip/start_listen/is_recording", t, s)
+            self._send("/live/clip/get/is_recording", t, s)
+            self._send("/live/clip/start_listen/color", t, s)
+            self._send("/live/clip/get/color", t, s)
+        if changed:
+            self._notify()
+
+    def _h_clip_recording(self, addr, *args):
+        self._touch()
+        if len(args) < 3:
+            return
+        key = (int(args[0]), int(args[1]))
+        v = bool(args[2])
+        with self.state.lock:
+            changed = self.state.slot_recording.get(key) != v
+            self.state.slot_recording[key] = v
+        if changed:
+            self._notify()
+
+    def _h_clip_color(self, addr, *args):
+        self._touch()
+        if len(args) < 3:
+            return
+        key = (int(args[0]), int(args[1]))
+        try:
+            c = int(args[2])
+        except (TypeError, ValueError):
+            return
+        with self.state.lock:
+            changed = self.state.slot_color.get(key) != c
+            self.state.slot_color[key] = c
+        if changed:
+            self._notify()
 
     def _h_beat(self, addr, *args):
         # Fires once per beat. Animated by the presentation poll loop, so
@@ -532,6 +589,14 @@ class AbletonClient:
             self.state.fired_scene = scene
         self._notify()
 
+    def fire_clip_slot(self, track: int, scene: int) -> None:
+        """Fire a clip slot — records into an empty slot on an armed track,
+        launches/relaunches an existing clip otherwise (Live decides)."""
+        self._send("/live/clip_slot/fire", track, scene)
+
+    def stop_track_clips(self, track: int) -> None:
+        self._send("/live/track/stop_all_clips", track)
+
     def play(self) -> None:
         self._send("/live/song/start_playing")
 
@@ -555,6 +620,11 @@ class AbletonClient:
             cur = self.state.track_arm.get(track, False)
             self.state.track_arm[track] = not cur     # optimistic
         self._send("/live/track/set/arm", track, 0 if cur else 1)
+
+    def set_arm(self, track: int, on: bool) -> None:
+        with self.state.lock:
+            self.state.track_arm[track] = on
+        self._send("/live/track/set/arm", track, 1 if on else 0)
 
     def toggle_solo(self, track: int) -> None:
         with self.state.lock:

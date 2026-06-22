@@ -48,6 +48,10 @@ try:
     import vocal_looper
 except Exception:  # pragma: no cover
     vocal_looper = None
+try:
+    import session_looper
+except Exception:  # pragma: no cover
+    session_looper = None
 
 
 def _gen_factory(voice):
@@ -75,6 +79,8 @@ def _instruments():
         items.append((17, "VDJ", "decks", "#0ea5e9", vdj_control.VdjControl, None))
     if vocal_looper is not None:
         items.append((18, "LOOPER", "vocals", "#10b981", vocal_looper.VocalLooper, None))
+    if session_looper is not None:
+        items.append((19, "SESSION", "clips", "#22c55e", session_looper.SessionLooper, None))
     return items
 
 
