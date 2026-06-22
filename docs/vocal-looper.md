@@ -4,12 +4,14 @@ A multi-track live looping station on the deck (Music Hub → **LOOPER**): one r
 per vocal layer (voice, backing, khomus drone, live khomus…), each a Live track
 with a Looper device. Up to 4 layers.
 
-Per row, left → right:
+Up to **3 loopers** (rows 1-3). Per row, left → right:
 
-| LOOP | CLR | FX1 | FX2 | FX3 | MUTE | ARM | LEN |
+| LOOP | CLR | FX1 | FX2 | FX3 | MUTE | ARM | VU |
 |---|---|---|---|---|---|---|---|
 
-LEN sets loop length: **tap = ×2**, **hold = ÷2**. (The 4th row's LEN is HOME.)
+- **CLR**: tap = clear, **hold = undo**.
+- **Bottom row (4):** `L1÷2 L1×2  L2÷2 L2×2  L3÷2 L3×2  STOP-ALL  HOME` — loop
+  length per looper, plus a global **STOP-ALL** that stops every looper at once.
 
 ## How it works
 

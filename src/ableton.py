@@ -585,6 +585,24 @@ class AbletonClient:
     def looper_stop(self) -> None:
         self._set_looper_state(LOOPER_STOP)
 
+    def stop_all_loopers(self) -> None:
+        """Stop every looper at once (OSC State→Stop — reliable, unlike record)."""
+        with self.state.lock:
+            loopers = list(self.state.track_loopers.items())
+        for track, dev in loopers:
+            self._send("/live/device/set/parameter/value", track, dev, LOOPER_STATE_PARAM, LOOPER_STOP)
+
+    def solo_record(self, active_track: int) -> None:
+        """Only one looper records at a time: drop every OTHER looper that's
+        recording/overdubbing back to play, so layering one can't accidentally
+        leave a second one writing. (record→play over OSC is reliable.)"""
+        with self.state.lock:
+            loopers = list(self.state.track_loopers.items())
+            states = dict(self.state.looper_states)
+        for track, dev in loopers:
+            if track != active_track and states.get(track, LOOPER_STOP) in (LOOPER_RECORD, LOOPER_OVERDUB):
+                self._send("/live/device/set/parameter/value", track, dev, LOOPER_STATE_PARAM, LOOPER_PLAY)
+
     # -- Vocal Looper: per-track devices / FX bypass -------------------
 
     def vocal_tracks(self, limit: int = 4) -> list[int]:
