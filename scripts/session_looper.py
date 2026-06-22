@@ -146,21 +146,23 @@ class SessionLooper(ControlSurface):
             self._wave_pending.discard((t, s))
 
     def _wave_img(self, env, color: str, playing: bool, queued: bool):
-        img = Image.new("RGB", deck_ui.SIZE, "#10161f" if playing else "#0b0f1a")
+        # Playing = bright wave on a green-tinted bg with a thick green border
+        # (Ableton plays clips green); stopped = strongly dimmed; queued blinks.
+        bg = "#0a1f14" if playing else "#0b0f1a"
+        img = Image.new("RGB", deck_ui.SIZE, bg)
         d = ImageDraw.Draw(img)
         if env:
-            wc = color if playing else self._dim(color, 0.55)
+            wc = color if playing else self._dim(color, 0.30)
             n = len(env)
             bw = 96.0 / n
             for i, v in enumerate(env):
                 x = i * bw
-                h = int(v * 40) + 1
+                h = int(v * 38) + 1
                 d.rectangle([x, 48 - h, x + bw + 0.6, 48 + h], fill=wc)
         if playing:
-            d.rectangle([0, 0, 95, 95], outline="#ffffff", width=4)
-            d.polygon([(8, 36), (8, 60), (26, 48)], fill="#ffffff")   # ▶
+            d.rectangle([0, 0, 95, 95], outline="#22c55e", width=6)        # green = playing
         elif queued and int(time.monotonic() * 2) % 2:
-            d.rectangle([0, 0, 95, 95], outline=color, width=4)
+            d.rectangle([0, 0, 95, 95], outline="#fbbf24", width=5)        # amber blink = queued
         return img
 
     def _cell_img(self, t: int, s: int):
