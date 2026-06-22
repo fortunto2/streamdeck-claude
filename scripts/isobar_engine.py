@@ -35,7 +35,7 @@ except Exception:  # pragma: no cover
     _link = None
 
 try:
-    from src.midi_out import MidiOut
+    from src.midi_out import MidiOut, iac_bus_prefer
 except Exception:  # pragma: no cover
     MidiOut = None
 
@@ -102,7 +102,7 @@ def _get_midi():
         if _shared_midi is None and MidiOut is not None:
             try:
                 _shared_midi = MidiOut(port_name="StreamDeck Gen",
-                                       iac_prefer=["sdeck Bus 2", "IAC Driver Bus 2", "Bus 2"])
+                                       iac_prefer=iac_bus_prefer(2))
             except Exception:
                 _shared_midi = None
     return _shared_midi
@@ -154,9 +154,6 @@ class GenEngine:
         if self._link is None:
             self._link = _get_link()
         return self._link
-
-    def midi_kind(self) -> str:
-        return getattr(self._midi, "opened_kind", "—") if self._midi else "—"
 
     def current_tempo(self) -> tuple[float, int]:
         link = self._ensure_link()
@@ -261,12 +258,6 @@ class GenEngine:
     def nudge_root(self, semitones: int) -> None:
         with self.lock:
             self.root = max(0, min(120, self.root + semitones))
-
-    def cycle_root(self) -> None:
-        """Tap-cycle the root up through one octave (12 values, wraps)."""
-        with self.lock:
-            base = (self.root // 12) * 12
-            self.root = base + ((self.root + 1) % 12)
 
     def cycle_pulses(self) -> None:
         """Tap-cycle euclid density 0..steps (wraps), regenerating the grid."""

@@ -39,11 +39,11 @@ METER_CAP = 8          # only meter the first N tracks (one deck row wide)
 
 # Ableton Looper device: the "State" automation parameter is the multi-
 # purpose transport (0=Stop, 1=Record, 2=Play, 3=Overdub). Its index in
-# the Looper's parameter list is fixed by Live.
+# the Looper's parameter list is fixed by Live. Every Live device's on/off
+# switch is parameter 0 (used for FX bypass on the Vocal Looper page).
 LOOPER_STATE_PARAM = 1
+DEVICE_ON_PARAM = 0
 LOOPER_STOP, LOOPER_RECORD, LOOPER_PLAY, LOOPER_OVERDUB = 0, 1, 2, 3
-# Multi-purpose tap advance: empty→record→play→overdub→play→…
-_LOOPER_NEXT = {0: 1, 1: 2, 2: 3, 3: 2}
 
 
 class SessionState:
@@ -385,9 +385,9 @@ class AbletonClient:
                 self._send("/live/device/start_listen/parameter/value", track, di, LOOPER_STATE_PARAM)
                 self._send("/live/device/get/parameter/value", track, di, LOOPER_STATE_PARAM)
             else:
-                # FX device — watch its on/off (param 0) for the bypass LEDs.
-                self._send("/live/device/start_listen/parameter/value", track, di, 0)
-                self._send("/live/device/get/parameter/value", track, di, 0)
+                # FX device — watch its on/off for the bypass LEDs.
+                self._send("/live/device/start_listen/parameter/value", track, di, DEVICE_ON_PARAM)
+                self._send("/live/device/get/parameter/value", track, di, DEVICE_ON_PARAM)
         if first_looper is not None:
             with self.state.lock:
                 changed = self.state.looper != (track, first_looper)
@@ -414,7 +414,7 @@ class AbletonClient:
                 self.state.looper_states[track] = v
                 if lp == (track, device):
                     self.state.looper_state = v   # back-compat (first looper)
-        elif param == 0:
+        elif param == DEVICE_ON_PARAM:
             on = value >= 0.5
             with self.state.lock:
                 changed = self.state.device_on.get((track, device)) != on
@@ -570,12 +570,6 @@ class AbletonClient:
             self.state.looper_state = value  # optimistic; listener confirms
         self._notify()
 
-    def looper_advance(self) -> None:
-        """One tap = the Looper's multi-purpose button (rec → play → dub)."""
-        with self.state.lock:
-            s = self.state.looper_state
-        self._set_looper_state(_LOOPER_NEXT.get(s, LOOPER_RECORD))
-
     def looper_stop(self) -> None:
         self._set_looper_state(LOOPER_STOP)
 
@@ -604,7 +598,7 @@ class AbletonClient:
 
     def toggle_device(self, track: int, device: int) -> None:
         on = self.device_is_on(track, device)
-        self._send("/live/device/set/parameter/value", track, device, 0, 0.0 if on else 1.0)
+        self._send("/live/device/set/parameter/value", track, device, DEVICE_ON_PARAM, 0.0 if on else 1.0)
         with self.state.lock:
             self.state.device_on[(track, device)] = not on   # optimistic; surface
             # repaints the one key. The OSC confirm matches → no _notify storm.

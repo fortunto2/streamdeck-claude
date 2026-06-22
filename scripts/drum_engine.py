@@ -147,9 +147,6 @@ class DrumMachine:
             cur = min(self.SWING_STEPS, key=lambda s: abs(s - self.swing))
             self.swing = self.SWING_STEPS[(self.SWING_STEPS.index(cur) + 1) % len(self.SWING_STEPS)]
 
-    def swing_pct(self) -> int:
-        return int(round(50 + self.swing * 50))   # 0.0→50%, 0.24→62%
-
     def toggle_accent(self) -> None:
         with self.lock:
             self.accent = not self.accent

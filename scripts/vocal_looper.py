@@ -29,7 +29,7 @@ from control_surface import ControlSurface
 from src.ableton import AbletonClient
 
 try:
-    from src.midi_out import MidiOut
+    from src.midi_out import MidiOut, iac_bus_prefer
 except Exception:  # pragma: no cover
     MidiOut = None
 
@@ -64,7 +64,7 @@ class VocalLooper(ControlSurface):
             self.client = None
         if MidiOut is not None:
             try:
-                self.midi = MidiOut(iac_prefer=["sdeck Bus 1", "IAC Driver Bus 1", "Bus 1"])
+                self.midi = MidiOut(iac_prefer=iac_bus_prefer(1))
             except Exception:
                 self.midi = None
         self.render()

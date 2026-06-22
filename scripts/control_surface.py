@@ -36,6 +36,11 @@ class ControlSurface:
         self.running = False
         self._repaint_timer: threading.Timer | None = None
         self._lock = threading.Lock()
+        # Last image blitted per key — skip re-encoding + re-sending a key whose
+        # pixels didn't change. Surfaces repaint whole rows every frame; without
+        # this, ~200 redundant USB writes/sec fight the key-reader for the deck
+        # lock and show up as input lag.
+        self._key_cache: dict[int, int] = {}
         # Injected by the host launcher: goto(factory, back=...) opens
         # another surface (used by the Music Hub to switch instruments).
         self.goto = None
@@ -72,9 +77,13 @@ class ControlSurface:
 
     def set_key(self, pos: int, img) -> None:
         try:
+            digest = hash(img.tobytes())
+            if self._key_cache.get(pos) == digest:
+                return  # unchanged since last blit — skip the encode + USB write
             native = PILHelper.to_native_key_format(self.deck, img)
             with self.deck:
                 self.deck.set_key_image(pos, native)
+            self._key_cache[pos] = digest
         except Exception:
             pass
 

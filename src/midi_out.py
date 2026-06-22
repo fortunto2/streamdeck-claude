@@ -30,6 +30,13 @@ log = logging.getLogger(__name__)
 PORT_NAME = "StreamDeck"
 
 
+def iac_bus_prefer(n: int) -> list[str]:
+    """Priority list to target IAC `Bus n` regardless of the device's name —
+    the user may have renamed the IAC Driver (e.g. to 'sdeck'). Matches the
+    specific names first, then any device's 'Bus n'."""
+    return [f"sdeck Bus {n}", f"IAC Driver Bus {n}", f"Bus {n}"]
+
+
 class MidiOut:
     """Wraps a MIDI output port. Thread-safe note send."""
 

@@ -24,7 +24,7 @@ from src.ableton import AbletonClient, METER_CAP
 # Looper Clear / ×2 / ÷2 aren't OSC-controllable (not parameters), so the
 # deck sends them as MIDI for the user to map once in Live (Cmd+M).
 try:
-    from src.midi_out import MidiOut
+    from src.midi_out import MidiOut, iac_bus_prefer
 except Exception:  # pragma: no cover
     MidiOut = None
 
@@ -97,7 +97,7 @@ class AbletonControl(ControlSurface):
             try:
                 # Looper control → IAC Bus 1 (Live: Remote on, Track off) so
                 # these messages map to buttons and never play notes.
-                self.midi = MidiOut(iac_prefer=["sdeck Bus 1", "IAC Driver Bus 1", "Bus 1"])
+                self.midi = MidiOut(iac_prefer=iac_bus_prefer(1))
             except Exception:
                 self.midi = None
         self.render()

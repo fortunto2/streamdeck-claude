@@ -19,11 +19,11 @@ from __future__ import annotations
 import deck_ui
 from control_surface import ControlSurface
 
-from src.midi_out import MidiOut
+from src.midi_out import MidiOut, iac_bus_prefer
 
 VDJ_CHANNEL = 0    # dedicated port, so channel is free — use ch 1
 VDJ_PORT = "StreamDeck VDJ"
-VDJ_IAC_PREFER = ["sdeck Bus 3", "IAC Driver Bus 3", "Bus 3"]   # its own bus, else virtual
+VDJ_IAC_PREFER = iac_bus_prefer(3)   # its own bus if present, else a virtual port
 KEY_HOME = ControlSurface.HOME_KEY  # 31
 
 # (key, label, sub, colour). The MIDI note sent == key index. A1/B1 = decks.
