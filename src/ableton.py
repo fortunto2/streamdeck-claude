@@ -373,6 +373,10 @@ class AbletonClient:
             self._send("/live/clip/get/is_playing", t, s)
             self._send("/live/clip/start_listen/muted", t, s)        # tap-to-mute state
             self._send("/live/clip/get/muted", t, s)
+            self._send("/live/clip/start_listen/loop_start", t, s)   # loop size (÷2 / ×2)
+            self._send("/live/clip/get/loop_start", t, s)
+            self._send("/live/clip/start_listen/loop_end", t, s)
+            self._send("/live/clip/get/loop_end", t, s)
             self._send("/live/clip/start_listen/color", t, s)
             self._send("/live/clip/get/color", t, s)
             self._send("/live/clip/get/file_path", t, s)   # for offline trim
@@ -704,6 +708,10 @@ class AbletonClient:
         self._send("/live/clip/set/loop_start", track, scene, float(start_beats))
         self._send("/live/clip/set/loop_end", track, scene, float(end_beats))
         self._send("/live/clip/set/end_marker", track, scene, float(end_beats))
+        with self.state.lock:                       # optimistic — readout updates now
+            self.state.slot_loop_start[(track, scene)] = float(start_beats)
+            self.state.slot_loop_end[(track, scene)] = float(end_beats)
+        self._notify()
 
     def clip_crop(self, track: int, scene: int) -> None:
         """Native Crop — bake the current loop into the sample (trims the file)."""
