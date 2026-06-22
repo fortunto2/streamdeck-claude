@@ -79,6 +79,13 @@ class SessionState:
         # plus its current State (see LOOPER_* constants).
         self.looper: tuple[int, int] | None = None
         self.looper_state = LOOPER_STOP
+        # Per-track device model for the Vocal Looper page: device names,
+        # the looper device index per track, its live State, and the on/off
+        # of each device (for FX bypass toggles — no MIDI mapping needed).
+        self.track_devices: dict[int, list[str]] = {}
+        self.track_loopers: dict[int, int] = {}
+        self.looper_states: dict[int, int] = {}
+        self.device_on: dict[tuple[int, int], bool] = {}
         # Last scene we fired locally — used to highlight the active row
         # (Live's API has no single "playing scene" property).
         self.fired_scene: int | None = None
@@ -364,18 +371,29 @@ class AbletonClient:
         if not args:
             return
         track = int(args[0])
-        for di, nm in enumerate(args[1:]):
-            if "looper" in str(nm).lower():
+        names = [str(nm) for nm in args[1:]]
+        with self.state.lock:
+            self.state.track_devices[track] = names
+        first_looper = None
+        for di, nm in enumerate(names):
+            if "looper" in nm.lower():
+                if first_looper is None:
+                    first_looper = di
                 with self.state.lock:
-                    changed = self.state.looper != (track, di)
-                    self.state.looper = (track, di)
-                # Mirror its State so the LED tracks Live (and changes
-                # made from Live's UI / a foot pedal).
+                    self.state.track_loopers[track] = di
+                # Mirror its State so the LED tracks Live (UI / foot pedal too).
                 self._send("/live/device/start_listen/parameter/value", track, di, LOOPER_STATE_PARAM)
                 self._send("/live/device/get/parameter/value", track, di, LOOPER_STATE_PARAM)
-                if changed:
-                    self._notify()
-                return
+            else:
+                # FX device — watch its on/off (param 0) for the bypass LEDs.
+                self._send("/live/device/start_listen/parameter/value", track, di, 0)
+                self._send("/live/device/get/parameter/value", track, di, 0)
+        if first_looper is not None:
+            with self.state.lock:
+                changed = self.state.looper != (track, first_looper)
+                self.state.looper = (track, first_looper)   # back-compat: first looper
+            if changed:
+                self._notify()
 
     def _h_device_param(self, addr, *args):
         self._touch()
@@ -387,13 +405,22 @@ class AbletonClient:
             return
         with self.state.lock:
             lp = self.state.looper
-        if lp == (track, device) and param == LOOPER_STATE_PARAM:
+            is_looper = self.state.track_loopers.get(track) == device
+        changed = False
+        if param == LOOPER_STATE_PARAM and is_looper:
             v = int(round(value))
             with self.state.lock:
-                changed = self.state.looper_state != v
-                self.state.looper_state = v
-            if changed:
-                self._notify()
+                changed = self.state.looper_states.get(track) != v
+                self.state.looper_states[track] = v
+                if lp == (track, device):
+                    self.state.looper_state = v   # back-compat (first looper)
+        elif param == 0:
+            on = value >= 0.5
+            with self.state.lock:
+                changed = self.state.device_on.get((track, device)) != on
+                self.state.device_on[(track, device)] = on
+        if changed:
+            self._notify()
 
     def _h_track_mute(self, addr, *args):
         self._touch()
@@ -549,6 +576,40 @@ class AbletonClient:
 
     def looper_stop(self) -> None:
         self._set_looper_state(LOOPER_STOP)
+
+    # -- Vocal Looper: per-track devices / FX bypass -------------------
+
+    def vocal_tracks(self, limit: int = 4) -> list[int]:
+        """Tracks that host a Looper — the vocal-loop layers, in order."""
+        with self.state.lock:
+            return sorted(self.state.track_loopers.keys())[:limit]
+
+    def fx_devices(self, track: int, limit: int = 3) -> list[int]:
+        """Non-looper device indices on a track (FX bypass slots)."""
+        with self.state.lock:
+            names = self.state.track_devices.get(track, [])
+            looper = self.state.track_loopers.get(track)
+        return [i for i in range(len(names)) if i != looper][:limit]
+
+    def device_name(self, track: int, device: int) -> str:
+        with self.state.lock:
+            names = self.state.track_devices.get(track, [])
+        return names[device] if 0 <= device < len(names) else "—"
+
+    def device_is_on(self, track: int, device: int) -> bool:
+        with self.state.lock:
+            return self.state.device_on.get((track, device), True)
+
+    def toggle_device(self, track: int, device: int) -> None:
+        on = self.device_is_on(track, device)
+        self._send("/live/device/set/parameter/value", track, device, 0, 0.0 if on else 1.0)
+        with self.state.lock:
+            self.state.device_on[(track, device)] = not on   # optimistic
+        self._notify()
+
+    def looper_state_of(self, track: int) -> int:
+        with self.state.lock:
+            return self.state.looper_states.get(track, LOOPER_STOP)
 
     def request_meters(self, n: int) -> None:
         for t in range(min(n, METER_CAP)):
