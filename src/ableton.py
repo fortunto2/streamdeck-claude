@@ -64,6 +64,7 @@ class SessionState:
         self.slot_recording: dict[tuple[int, int], bool] = {}
         self.slot_color: dict[tuple[int, int], int] = {}
         self.slot_file_path: dict[tuple[int, int], str] = {}
+        self.slot_muted: dict[tuple[int, int], bool] = {}
         self.slot_loop_start: dict[tuple[int, int], float] = {}
         self.slot_loop_end: dict[tuple[int, int], float] = {}
         # Global clip-launch/record quantization (Live enum: 0=None,4=1Bar,…).
@@ -151,6 +152,7 @@ class AbletonClient:
         disp.map("/live/clip_slot/get/has_clip", self._h_slot_has_clip)
         disp.map("/live/clip/get/is_recording", self._h_clip_recording)
         disp.map("/live/clip/get/is_playing", self._h_clip_playing)
+        disp.map("/live/clip/get/muted", self._h_clip_muted)
         disp.map("/live/clip/get/color", self._h_clip_color)
         disp.map("/live/clip/get/file_path", self._h_clip_file_path)
         disp.map("/live/clip/get/loop_start", self._h_clip_loop_start)
@@ -361,6 +363,7 @@ class AbletonClient:
             if not has:
                 self.state.slot_recording.pop((t, s), None)
                 self.state.slot_color.pop((t, s), None)
+                self.state.slot_muted.pop((t, s), None)
         if has:
             # Clip appeared — watch its recording state + colour (lazy, so we
             # never poke empty slots, which would error in Live).
@@ -368,6 +371,8 @@ class AbletonClient:
             self._send("/live/clip/get/is_recording", t, s)
             self._send("/live/clip/start_listen/is_playing", t, s)   # reliable play state
             self._send("/live/clip/get/is_playing", t, s)
+            self._send("/live/clip/start_listen/muted", t, s)        # tap-to-mute state
+            self._send("/live/clip/get/muted", t, s)
             self._send("/live/clip/start_listen/color", t, s)
             self._send("/live/clip/get/color", t, s)
             self._send("/live/clip/get/file_path", t, s)   # for offline trim
@@ -395,6 +400,18 @@ class AbletonClient:
         with self.state.lock:
             changed = self.state.slot_playing.get(key) != v
             self.state.slot_playing[key] = v
+        if changed:
+            self._notify()
+
+    def _h_clip_muted(self, addr, *args):
+        self._touch()
+        if len(args) < 3:
+            return
+        key = (int(args[0]), int(args[1]))
+        v = bool(args[2])
+        with self.state.lock:
+            changed = self.state.slot_muted.get(key) != v
+            self.state.slot_muted[key] = v
         if changed:
             self._notify()
 
@@ -665,6 +682,20 @@ class AbletonClient:
 
     def delete_clip_slot(self, track: int, scene: int) -> None:
         self._send("/live/clip_slot/delete_clip", track, scene)
+
+    def set_clip_muted(self, track: int, scene: int, muted: bool) -> None:
+        """Mute/unmute a single clip — silences it but keeps it looping in sync
+        (drop a layer out/in on the grid). Optimistic local update for instant UI."""
+        self._send("/live/clip/set/muted", track, scene, 1 if muted else 0)
+        with self.state.lock:
+            self.state.slot_muted[(track, scene)] = muted
+        self._notify()
+
+    def toggle_clip_muted(self, track: int, scene: int) -> bool:
+        with self.state.lock:
+            cur = self.state.slot_muted.get((track, scene), False)
+        self.set_clip_muted(track, scene, not cur)
+        return not cur
 
     def set_clip_loop(self, track: int, scene: int, start_beats: float, end_beats: float) -> None:
         """Loop a clip between two beat positions (start/end markers + loop)."""

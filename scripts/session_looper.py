@@ -145,22 +145,28 @@ class SessionLooper(ControlSurface):
                 self._wave[(t, s)] = (path, env)
             self._wave_pending.discard((t, s))
 
-    def _wave_img(self, env, color: str, playing: bool, queued: bool):
-        # Playing = bright wave on a green-tinted bg with a thick green border
-        # (Ableton plays clips green); stopped = strongly dimmed; queued blinks.
-        bg = "#0a1f14" if playing else "#0b0f1a"
+    def _wave_img(self, env, color: str, playing: bool, queued: bool, muted: bool = False):
+        # Sounding (playing & not muted) = bright wave, green-tinted bg, thick
+        # green border (Ableton plays clips green). Playing-but-MUTED = dim wave
+        # + slate border (in sync, silenced). Stopped = strongly dimmed, no
+        # border. Queued = amber blink.
+        live = playing and not muted
+        bg = "#0a1f14" if live else "#0b0f1a"
         img = Image.new("RGB", deck_ui.SIZE, bg)
         d = ImageDraw.Draw(img)
         if env:
-            wc = color if playing else self._dim(color, 0.30)
+            wc = color if live else self._dim(color, 0.30)
             n = len(env)
             bw = 96.0 / n
             for i, v in enumerate(env):
                 x = i * bw
                 h = int(v * 38) + 1
                 d.rectangle([x, 48 - h, x + bw + 0.6, 48 + h], fill=wc)
-        if playing:
-            d.rectangle([0, 0, 95, 95], outline="#22c55e", width=6)        # green = playing
+        if live:
+            d.rectangle([0, 0, 95, 95], outline="#22c55e", width=6)        # green = sounding
+        elif playing and muted:
+            d.rectangle([0, 0, 95, 95], outline="#64748b", width=4)        # slate = playing, muted
+            d.text((38, 40), "M", fill="#94a3b8")
         elif queued and int(time.monotonic() * 2) % 2:
             d.rectangle([0, 0, 95, 95], outline="#fbbf24", width=5)        # amber blink = queued
         return img
@@ -172,6 +178,7 @@ class SessionLooper(ControlSurface):
             playing = st.slot_playing.get((t, s), False)
             trig = st.slot_triggered.get((t, s), False)
             rec = st.slot_recording.get((t, s), False)
+            muted = st.slot_muted.get((t, s), False)
             color = st.slot_color.get((t, s))
             tcolor = st.track_color.get(t)
             ntracks = st.num_tracks
@@ -183,7 +190,7 @@ class SessionLooper(ControlSurface):
             return deck_ui.btn(self._dim(self._hex(tcolor), 0.22), [("+", 26, "#64748b")])
         base = self._hex(color or tcolor)
         env = self._wave_get(t, s)
-        return self._wave_img(env, base, playing, trig and not playing)
+        return self._wave_img(env, base, playing, trig and not playing, muted)
 
     def render(self) -> None:
         if not self.running:
@@ -258,6 +265,7 @@ class SessionLooper(ControlSurface):
         st = self.client.state
         with st.lock:
             has = st.slot_has_clip.get((t, s), False)
+            playing = st.slot_playing.get((t, s), False)
             ntracks = st.num_tracks
         if t >= ntracks:
             return
@@ -270,6 +278,9 @@ class SessionLooper(ControlSurface):
         if has and dt >= LONG_PRESS:
             self.set_key(key, deck_ui.btn("#7f1d1d", [("DEL", 14, "#fecaca")]))
             self.client.delete_clip_slot(t, s)   # long press = delete the clip
+            return
+        if has and playing:
+            self.client.toggle_clip_muted(t, s)   # tap a playing clip = mute/unmute (stays in sync)
             return
         if not has:
             self.client.set_arm(t, True)
