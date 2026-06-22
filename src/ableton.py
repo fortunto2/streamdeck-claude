@@ -374,26 +374,24 @@ class AbletonClient:
         names = [str(nm) for nm in args[1:]]
         with self.state.lock:
             self.state.track_devices[track] = names
-        first_looper = None
-        for di, nm in enumerate(names):
-            if "looper" in nm.lower():
-                if first_looper is None:
-                    first_looper = di
-                with self.state.lock:
-                    self.state.track_loopers[track] = di
-                # Mirror its State so the LED tracks Live (UI / foot pedal too).
-                self._send("/live/device/start_listen/parameter/value", track, di, LOOPER_STATE_PARAM)
-                self._send("/live/device/get/parameter/value", track, di, LOOPER_STATE_PARAM)
-            else:
-                # FX device — watch its on/off for the bypass LEDs.
-                self._send("/live/device/start_listen/parameter/value", track, di, DEVICE_ON_PARAM)
-                self._send("/live/device/get/parameter/value", track, di, DEVICE_ON_PARAM)
-        if first_looper is not None:
-            with self.state.lock:
-                changed = self.state.looper != (track, first_looper)
-                self.state.looper = (track, first_looper)   # back-compat: first looper
-            if changed:
-                self._notify()
+        loopers = [i for i, nm in enumerate(names) if "looper" in nm.lower()]
+        if not loopers:
+            return  # not a vocal-loop layer — don't flood Live with subscriptions
+        first_looper = loopers[0]
+        with self.state.lock:
+            self.state.track_loopers[track] = first_looper
+            changed = self.state.looper != (track, first_looper)
+            self.state.looper = (track, first_looper)   # back-compat: first looper
+        # Looper State → LED (mirrors Live UI / foot pedal too).
+        self._send("/live/device/start_listen/parameter/value", track, first_looper, LOOPER_STATE_PARAM)
+        self._send("/live/device/get/parameter/value", track, first_looper, LOOPER_STATE_PARAM)
+        # FX bypass LEDs — only the first 3 non-looper devices on this layer.
+        fx = [i for i in range(len(names)) if i not in loopers][:3]
+        for di in fx:
+            self._send("/live/device/start_listen/parameter/value", track, di, DEVICE_ON_PARAM)
+            self._send("/live/device/get/parameter/value", track, di, DEVICE_ON_PARAM)
+        if changed:
+            self._notify()
 
     def _h_device_param(self, addr, *args):
         self._touch()
