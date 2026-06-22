@@ -22,7 +22,7 @@ from __future__ import annotations
 import threading
 import time
 
-from PIL import Image, ImageDraw
+from PIL import Image
 
 import deck_ui
 from control_surface import ControlSurface
@@ -37,7 +37,10 @@ LAYERS = 4
 VL_MIDI_CH = 15            # MIDI channel 16 → Bus 1 (looper buttons)
 VL_TRANSPORT_BASE = 90    # transport note = base + row
 VL_CLEAR_BASE = 94        # clear note     = base + row
-FPS = 10.0
+VL_HALF_BASE = 98         # ÷2 note        = base + row
+VL_DOUBLE_BASE = 102      # ×2 note        = base + row
+FPS = 4.0
+LONG_PRESS = 0.35
 KEY_HOME = ControlSurface.HOME_KEY  # 31
 
 # Looper State → (colour, glyph). 0 Stop, 1 Record, 2 Play, 3 Overdub.
@@ -53,6 +56,7 @@ class VocalLooper(ControlSurface):
         self.client: AbletonClient | None = None
         self.midi = None
         self._poll_thread: threading.Thread | None = None
+        self._press_t: dict[int, float] = {}
 
     def start(self) -> None:
         self.running = True
@@ -97,26 +101,13 @@ class VocalLooper(ControlSurface):
 
     def _poll(self) -> None:
         frame = 1.0 / FPS
-        keepalive_every = max(1, int(FPS * 0.8))   # ~0.8 s, not every frame
-        tick = 0
         while self.running:
             try:
                 if self.client is not None:
-                    if tick % keepalive_every == 0:
-                        self.client.keepalive()
-                    tracks = self.client.vocal_tracks(LAYERS)
-                    if tracks:
-                        self.client.request_meters(max(tracks) + 1)
-                        self._paint_vu(tracks)
+                    self.client.keepalive()   # keep `connected` / feedback alive
             except Exception:
                 pass
-            tick += 1
             time.sleep(frame)
-
-    def _vu_img(self, level: float) -> Image.Image:
-        img = Image.new("RGB", deck_ui.SIZE, "#0b0f1a")
-        deck_ui.vu_bar(ImageDraw.Draw(img), level, x0=20, x1=76)
-        return img
 
     def _abbrev(self, name: str) -> str:
         return (name[:7]) if name and name != "—" else "—"
@@ -153,15 +144,9 @@ class VocalLooper(ControlSurface):
                 armed = st.track_arm.get(track, False)
             return deck_ui.btn("#b91c1c" if armed else "#1f2937",
                                [("ARM", 12, "#fff" if armed else "#cbd5e1")])
-        with st.lock:                             # col 7 — VU
-            lvl = st.track_meter.get(track, 0.0)
-        return self._vu_img(lvl)
-
-    def _paint_vu(self, tracks: list[int]) -> None:
-        for row, track in enumerate(tracks):
-            k = row * 8 + 7
-            if k != KEY_HOME:
-                self.set_key(k, self._cell_img(row, 7, track))
+        return deck_ui.btn("#1e3a5f", [("LEN", 13, "#bfdbfe"),   # col 7 — loop length
+                                       ("×2", 13, "#dbeafe"),
+                                       ("hold ÷2", 9, "#93c5fd")])
 
     def render(self) -> None:
         if not self.running:
@@ -190,16 +175,24 @@ class VocalLooper(ControlSurface):
     # -- input ---------------------------------------------------------
 
     def on_key(self, _deck, key: int, pressed: bool) -> None:
-        if not pressed:
-            return
         if key == KEY_HOME:
-            self.on_home()
+            if pressed:
+                self.on_home()
             return
         if self.client is None:
             return
         row, col = divmod(key, 8)
         tracks = self.client.vocal_tracks(LAYERS)
         if row >= len(tracks):
+            return
+        if col == 7:   # LEN — tap = ×2, hold = ÷2 (press/release timing)
+            if pressed:
+                self._press_t[key] = time.monotonic()
+                return
+            held = (time.monotonic() - self._press_t.pop(key, time.monotonic())) >= LONG_PRESS
+            self._looper_midi((VL_HALF_BASE if held else VL_DOUBLE_BASE) + row)
+            return
+        if not pressed:
             return
         track = tracks[row]
         if col == 0:
