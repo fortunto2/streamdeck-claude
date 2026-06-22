@@ -196,6 +196,7 @@ class SessionLooper(ControlSurface):
             return
         dt = time.monotonic() - self._press_t.pop(key, time.monotonic())
         if has and dt >= LONG_PRESS:
+            self.set_key(key, deck_ui.btn("#fbbf24", [("TRIM", 13, "#0b0f1a")]))  # flash
             threading.Thread(target=self._trim, args=(t, s), daemon=True).start()
             return
         if not has:
@@ -206,26 +207,36 @@ class SessionLooper(ControlSurface):
         """Read the clip's file, find the content bounds, and set a beat-aligned
         loop to just that — the 'find start/end + align to grid' button."""
         import math
-        import audio_trim
         c = self.client
+        print(f"[session] trim t={t} s={s} — requested")
+        try:
+            import audio_trim
+        except Exception as e:
+            print(f"[session] trim: audio_trim import failed: {e}")
+            return
         path = c.state.slot_file_path.get((t, s))
         if not path:
             c._send("/live/clip/get/file_path", t, s)
-            for _ in range(20):
+            for _ in range(30):
                 time.sleep(0.05)
                 path = c.state.slot_file_path.get((t, s))
                 if path:
                     break
         if not path:
+            print(f"[session] trim t={t} s={s}: no file path from Live")
             return
+        print(f"[session] trim file: {path}")
         r = audio_trim.content_bounds(path, top_db=30.0)
         if not r:
+            print("[session] trim: content_bounds returned None (read failed?)")
             return
-        start_sec, end_sec, _dur, _sr = r
+        start_sec, end_sec, dur, sr = r
         bpm = max(c.state.tempo, 1.0)
         spb = 60.0 / bpm                       # seconds per beat (clip warped to host)
         ls = max(0.0, float(math.floor(start_sec / spb)))   # snap start down to a beat
         le = float(math.ceil(end_sec / spb))                # snap end up to a beat
         if le <= ls:
             le = ls + 1.0
+        print(f"[session] trim: content {start_sec:.2f}-{end_sec:.2f}s of {dur:.2f}s "
+              f"@ {bpm:.1f}bpm -> loop {ls:.0f}-{le:.0f} beats")
         c.set_clip_loop(t, s, ls, le)
