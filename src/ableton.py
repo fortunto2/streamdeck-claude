@@ -380,12 +380,6 @@ class AbletonClient:
         first_looper = loopers[0]
         with self.state.lock:
             self.state.track_loopers[track] = first_looper
-            # The Ableton page's single-looper LED points at the lowest-track
-            # looper, deterministically — so adding loopers to vocal tracks for
-            # the Vocal Looper page doesn't clobber it (was: last one found).
-            lowest = min((t, d) for t, d in self.state.track_loopers.items())
-            changed = self.state.looper != lowest
-            self.state.looper = lowest
         # Looper State → LED (mirrors Live UI / foot pedal too).
         self._send("/live/device/start_listen/parameter/value", track, first_looper, LOOPER_STATE_PARAM)
         self._send("/live/device/get/parameter/value", track, first_looper, LOOPER_STATE_PARAM)
@@ -394,6 +388,26 @@ class AbletonClient:
         for di in fx:
             self._send("/live/device/start_listen/parameter/value", track, di, DEVICE_ON_PARAM)
             self._send("/live/device/get/parameter/value", track, di, DEVICE_ON_PARAM)
+        self._recompute_active_looper()
+
+    def _recompute_active_looper(self) -> None:
+        """Point the single-looper view (Ableton page LED + Clear/×2/÷2 keys)
+        at the looper on the currently selected Live track — so it follows the
+        loop you're working on, not whichever was detected last. Falls back to
+        the lowest-track looper when the selected track has none."""
+        with self.state.lock:
+            sel = self.state.selected_track
+            lps = self.state.track_loopers
+            if sel is not None and sel in lps:
+                new = (sel, lps[sel])
+            elif lps:
+                new = min(lps.items())
+            else:
+                new = None
+            changed = self.state.looper != new
+            self.state.looper = new
+            if new is not None:
+                self.state.looper_state = self.state.looper_states.get(new[0], LOOPER_STOP)
         if changed:
             self._notify()
 
@@ -512,6 +526,7 @@ class AbletonClient:
                 changed = self.state.selected_track != v
                 self.state.selected_track = v
             if changed:
+                self._recompute_active_looper()   # LED follows the selected loop track
                 self._notify()
 
     # -- actions (fire-and-forget — always sent, never gated) -----------
