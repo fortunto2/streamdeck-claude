@@ -15,6 +15,7 @@ dependencies = [
     # acts as a hardware MIDI controller into any DAW.
     "python-rtmidi>=1.5.8",
     "isobar>=0.2.1",
+    "soundfile>=0.14.0",
 ]
 
 [project.scripts]
