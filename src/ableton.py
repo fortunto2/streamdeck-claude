@@ -535,11 +535,13 @@ class AbletonClient:
     def toggle_mute(self, track: int) -> None:
         with self.state.lock:
             cur = self.state.track_mute.get(track, False)
+            self.state.track_mute[track] = not cur   # optimistic — instant LED
         self._send("/live/track/set/mute", track, 0 if cur else 1)
 
     def toggle_arm(self, track: int) -> None:
         with self.state.lock:
             cur = self.state.track_arm.get(track, False)
+            self.state.track_arm[track] = not cur     # optimistic
         self._send("/live/track/set/arm", track, 0 if cur else 1)
 
     def toggle_solo(self, track: int) -> None:
@@ -604,8 +606,8 @@ class AbletonClient:
         on = self.device_is_on(track, device)
         self._send("/live/device/set/parameter/value", track, device, 0, 0.0 if on else 1.0)
         with self.state.lock:
-            self.state.device_on[(track, device)] = not on   # optimistic
-        self._notify()
+            self.state.device_on[(track, device)] = not on   # optimistic; surface
+            # repaints the one key. The OSC confirm matches → no _notify storm.
 
     def looper_state_of(self, track: int) -> int:
         with self.state.lock:

@@ -97,37 +97,71 @@ class VocalLooper(ControlSurface):
 
     def _poll(self) -> None:
         frame = 1.0 / FPS
+        keepalive_every = max(1, int(FPS * 0.8))   # ~0.8 s, not every frame
+        tick = 0
         while self.running:
             try:
                 if self.client is not None:
-                    self.client.keepalive()
-                    self.client.request_meters(16)
-                    self._paint_vu()
+                    if tick % keepalive_every == 0:
+                        self.client.keepalive()
+                    tracks = self.client.vocal_tracks(LAYERS)
+                    if tracks:
+                        self.client.request_meters(max(tracks) + 1)
+                        self._paint_vu(tracks)
             except Exception:
                 pass
+            tick += 1
             time.sleep(frame)
 
     def _vu_img(self, level: float) -> Image.Image:
         img = Image.new("RGB", deck_ui.SIZE, "#0b0f1a")
-        d = ImageDraw.Draw(img)
-        deck_ui.vu_bar(d, level, x0=20, x1=76)
+        deck_ui.vu_bar(ImageDraw.Draw(img), level, x0=20, x1=76)
         return img
-
-    def _paint_vu(self) -> None:
-        if self.client is None:
-            return
-        tracks = self.client.vocal_tracks(LAYERS)
-        st = self.client.state
-        for row, track in enumerate(tracks):
-            k = row * 8 + 7
-            if k == KEY_HOME:
-                continue
-            with st.lock:
-                lvl = st.track_meter.get(track, 0.0)
-            self.set_key(k, self._vu_img(lvl))
 
     def _abbrev(self, name: str) -> str:
         return (name[:7]) if name and name != "—" else "—"
+
+    def _cell_img(self, row: int, col: int, track: int) -> Image.Image:
+        c = self.client
+        st = c.state
+        if col == 0:                              # LOOP transport (LED = state)
+            with st.lock:
+                name = st.track_names.get(track, f"trk {track}")
+            bg, glyph = LOOP_LED.get(c.looper_state_of(track), LOOP_LED[0])
+            return deck_ui.btn(bg, [(glyph, 12, "#fff"), (name[:8], 10, "#e5e7eb")])
+        if col == 1:                              # CLR
+            return deck_ui.btn("#450a0a", [("CLR", 14, "#fecaca")])
+        if col in (2, 3, 4):                      # FX bypass
+            fx = c.fx_devices(track, 3)
+            j = col - 2
+            if j >= len(fx):
+                return deck_ui.btn("#0b0f1a", [])
+            dev = fx[j]
+            on = c.device_is_on(track, dev)
+            nm = self._abbrev(c.device_name(track, dev))
+            return deck_ui.btn(FX_COLORS[j] if on else "#1f2937",
+                               [(nm, 12, "#fff" if on else "#9ca3af"),
+                                ("on" if on else "byp", 9, "#d1fae5" if on else "#6b7280")])
+        if col == 5:                              # MUTE
+            with st.lock:
+                muted = st.track_mute.get(track, False)
+            return deck_ui.btn("#7f1d1d" if muted else "#1f2937",
+                               [("MUTE" if muted else "mute", 12,
+                                 "#fecaca" if muted else "#cbd5e1")])
+        if col == 6:                              # ARM
+            with st.lock:
+                armed = st.track_arm.get(track, False)
+            return deck_ui.btn("#b91c1c" if armed else "#1f2937",
+                               [("ARM", 12, "#fff" if armed else "#cbd5e1")])
+        with st.lock:                             # col 7 — VU
+            lvl = st.track_meter.get(track, 0.0)
+        return self._vu_img(lvl)
+
+    def _paint_vu(self, tracks: list[int]) -> None:
+        for row, track in enumerate(tracks):
+            k = row * 8 + 7
+            if k != KEY_HOME:
+                self.set_key(k, self._cell_img(row, 7, track))
 
     def render(self) -> None:
         if not self.running:
@@ -140,7 +174,6 @@ class VocalLooper(ControlSurface):
             self.render_home_key()
             return
         tracks = self.client.vocal_tracks(LAYERS)
-        st = self.client.state
         if not tracks:
             self.set_key(0, deck_ui.btn("#1f2937", [("add a", 11, "#cbd5e1"),
                                                     ("Looper", 13, "#fff"),
@@ -148,36 +181,10 @@ class VocalLooper(ControlSurface):
             self.render_home_key()
             return
         for row, track in enumerate(tracks):
-            base = row * 8
-            with st.lock:
-                name = st.track_names.get(track, f"trk {track}")
-                muted = st.track_mute.get(track, False)
-                armed = st.track_arm.get(track, False)
-            lstate = self.client.looper_state_of(track)
-            lbg, lglyph = LOOP_LED.get(lstate, LOOP_LED[0])
-            self.set_key(base + 0, deck_ui.btn(lbg, [(lglyph, 12, "#fff"),
-                                                     (name[:8], 10, "#e5e7eb")]))
-            self.set_key(base + 1, deck_ui.btn("#450a0a", [("CLR", 14, "#fecaca")]))
-            fx = self.client.fx_devices(track, 3)
-            for j in range(3):
-                k = base + 2 + j
-                if j < len(fx):
-                    dev = fx[j]
-                    on = self.client.device_is_on(track, dev)
-                    nm = self._abbrev(self.client.device_name(track, dev))
-                    col = FX_COLORS[j]
-                    self.set_key(k, deck_ui.btn(col if on else "#1f2937",
-                                                [(nm, 12, "#fff" if on else "#9ca3af"),
-                                                 ("on" if on else "byp", 9,
-                                                  "#d1fae5" if on else "#6b7280")]))
-                else:
-                    self.set_key(k, deck_ui.btn("#0b0f1a", []))
-            self.set_key(base + 5, deck_ui.btn("#7f1d1d" if muted else "#1f2937",
-                                               [("MUTE" if muted else "mute", 12,
-                                                 "#fecaca" if muted else "#cbd5e1")]))
-            arm_k = base + 6
-            self.set_key(arm_k, deck_ui.btn("#b91c1c" if armed else "#1f2937",
-                                            [("ARM", 12, "#fff" if armed else "#cbd5e1")]))
+            for col in range(8):
+                k = row * 8 + col
+                if k != KEY_HOME:
+                    self.set_key(k, self._cell_img(row, col, track))
         self.render_home_key()
 
     # -- input ---------------------------------------------------------
@@ -210,4 +217,5 @@ class VocalLooper(ControlSurface):
             self.client.toggle_arm(track)
         else:
             return
-        self.render()
+        # instant single-key feedback (optimistic state) — no full-deck blink
+        self.set_key(key, self._cell_img(row, col, track))
