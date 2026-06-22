@@ -1,16 +1,19 @@
 """Session Looper — record live loops straight into Ableton Session clips.
 
-The deck mirrors Live's Session grid: 8 tracks (columns) × 3 scene slots (rows).
+Ableton-style grid: **7 tracks (columns 0-6) × 3 scene slots (rows)**, with the
+**scene-launch column on the right** (col 7) like Live. Bottom row = controls.
 
-- Tap an EMPTY slot → arms that track and fires it → Live records the input
-  into the clip (a new loop). Tap again / it auto-stops → the clip loops.
+- Tap an EMPTY slot → arms that track and fires it → Live records the input into
+  the clip (a new loop). Tap again / it auto-stops → the clip loops.
 - Tap an occupied clip → launch / relaunch it.
-- Bottom row: SCENE 1-3 launch the whole row (all tracks' clips together — the
-  "master layer"), STOP-ALL, HOME.
+- Long-press a clip → trim to content + warp + quantize to the grid (manual).
+- Right column → launch a whole scene (every track's clip together).
+- Bottom row: QUANT ↻ (record quantization), AUTO (auto-fit every recording to
+  the rhythm), STOP-all, HOME.
 
-The recorded loops ARE native Session clips: Live shows their waveforms, you
-see the layers in the slots, and you can drag them onto a Drum Rack pad / merge
-/ export by hand. No custom plugin — Ableton owns the audio, the deck drives it.
+Recorded loops are native Session clips — Live shows the waveform + layer stack;
+with AUTO on, each finished recording is trimmed to its content and warp-locked
+to the beat grid automatically (so khomus / vocal phrases groove with the beats).
 """
 
 from __future__ import annotations
@@ -22,16 +25,17 @@ import deck_ui
 from control_surface import ControlSurface
 from src.ableton import AbletonClient
 
-COLS = 8        # tracks shown
-ROWS = 3        # scene slots shown
-FPS = 6.0       # blink animation rate
+TRACKS = 7      # columns 0-6 (col 7 = scene launch)
+SCENES = 3      # rows 0-2
+FPS = 6.0
 LONG_PRESS = 0.4
-KEY_STOP_ALL = 27
-KEY_QUANTIZE = 28   # cycle global launch/record quantization
+SCENE_COL = 7
+SCENE_KEYS = [s * 8 + SCENE_COL for s in range(SCENES)]   # 7, 15, 23
+KEY_QUANT = 24
+KEY_AUTO = 25
+KEY_STOP_ALL = 26
 KEY_HOME = ControlSurface.HOME_KEY  # 31
 
-# Global quantization cycle (Live enum, label). 1 Bar makes loops record on the
-# bar by default; trimming aligns to the same grid.
 QUANT_CYCLE = [(4, "1 Bar"), (3, "2 Bar"), (7, "1/4"), (0, "Off")]
 # Live Quantization enum for warping clip transients to the grid on trim
 # (7=1/4, 9=1/8, 11=1/16). 1/16 locks rhythmic phrases tightest.
@@ -45,6 +49,8 @@ class SessionLooper(ControlSurface):
         self.client: AbletonClient | None = None
         self._poll_thread: threading.Thread | None = None
         self._press_t: dict[int, float] = {}
+        self._auto = True                       # auto-fit recordings by default
+        self._was_rec: dict[tuple[int, int], bool] = {}
 
     def start(self) -> None:
         self.running = True
@@ -74,12 +80,27 @@ class SessionLooper(ControlSurface):
                     if tick % 4 == 0:
                         self.client.keepalive()
                     if tick == 6 and not self.client._slots_subscribed:
-                        self.client._subscribe_slots()   # deferred, once
-                    self.render()                         # blink animation
+                        self.client._subscribe_slots()
+                    self._auto_trim_finished()
+                    self.render()
             except Exception:
                 pass
             tick += 1
             time.sleep(frame)
+
+    def _auto_trim_finished(self) -> None:
+        """When a recording just finished and AUTO is on, fit it automatically."""
+        st = self.client.state
+        with st.lock:
+            rec = dict(st.slot_recording)
+            has = dict(st.slot_has_clip)
+        if self._auto:
+            for key, was in self._was_rec.items():
+                if was and not rec.get(key, False) and has.get(key):
+                    # finished recording → fit to grid, then play it
+                    threading.Thread(target=self._trim, args=(key[0], key[1], True),
+                                     daemon=True).start()
+        self._was_rec = rec
 
     # -- rendering -----------------------------------------------------
 
@@ -111,57 +132,55 @@ class SessionLooper(ControlSurface):
         if rec:
             return deck_ui.btn("#dc2626" if blink else "#5c1212", [("●", 22, "#fff"), ("REC", 9, "#fecaca")])
         if not has:
-            # empty, tap to record — faint track tint + a clearly visible +
             return deck_ui.btn(self._dim(self._hex(tcolor), 0.22), [("+", 26, "#64748b")])
         base = self._hex(color or tcolor)
         if trig and not playing:
-            return deck_ui.btn(base if blink else "#1f2937", [("▷", 20, "#fff")])  # queued
+            return deck_ui.btn(base if blink else "#1f2937", [("▷", 20, "#fff")])
         if playing:
             return deck_ui.btn(base, [("▶", 20, "#0b0f1a")], border="#ffffff")
-        return deck_ui.btn(self._dim(base), [("■", 16, "#cbd5e1")])   # stored, stopped
+        return deck_ui.btn(self._dim(base), [("■", 16, "#cbd5e1")])
 
     def render(self) -> None:
         if not self.running:
             return
+        for k in range(32):
+            if k != KEY_HOME:
+                self.set_key(k, deck_ui.btn("#0b0f1a", []))
         if self.client is None:
-            for k in range(32):
-                if k != KEY_HOME:
-                    self.set_key(k, deck_ui.btn("#0b0f1a", []))
             self.set_key(0, deck_ui.btn("#7f1d1d", [("no OSC", 12, "#fecaca")]))
             self.render_home_key()
             return
         with self.client.state.lock:
             ntracks = self.client.state.num_tracks
-        if ntracks == 0:
-            for k in range(24):
-                self.set_key(k, deck_ui.btn("#0b0f1a", []))
-            self.set_key(0, deck_ui.btn("#1f2937", [("waiting", 11, "#cbd5e1"),
-                                                    ("for Live", 12, "#fff"),
-                                                    ("OSC…", 9, "#9ca3af")]))
-        else:
-            for s in range(ROWS):
-                for t in range(COLS):
-                    self.set_key(s * 8 + t, self._cell_img(t, s))
-        # bottom row — scene launch + stop-all
-        for i in range(3):
-            self.set_key(24 + i, deck_ui.btn("#1e293b", [("SCENE", 9, "#94a3b8"),
-                                                         (str(i + 1), 18, "#e5e7eb")]))
-        self.set_key(KEY_STOP_ALL, deck_ui.btn("#7f1d1d", [("STOP", 13, "#fecaca"), ("all", 9, "#f87171")]))
-        with self.client.state.lock:
             q = self.client.state.global_quant
+        if ntracks == 0:
+            self.set_key(0, deck_ui.btn("#1f2937", [("waiting", 11, "#cbd5e1"),
+                                                    ("for Live", 12, "#fff")]))
+        else:
+            for s in range(SCENES):
+                for t in range(TRACKS):
+                    self.set_key(s * 8 + t, self._cell_img(t, s))
+        # scene-launch column (right)
+        for s in range(SCENES):
+            self.set_key(SCENE_KEYS[s], deck_ui.btn("#1e293b", [("▶", 16, "#e5e7eb"),
+                                                               (f"SC{s + 1}", 10, "#94a3b8")]))
+        # control row
         qlabel = next((lbl for v, lbl in QUANT_CYCLE if v == q), str(q))
         qon = q != 0
-        self.set_key(KEY_QUANTIZE, deck_ui.btn("#0e7490" if qon else "#1f2937",
-                                               [("QUANT ↻", 10, "#a5f3fc"),
-                                                (qlabel, 16, "#fff" if qon else "#9ca3af")]))
-        for k in (29, 30):
-            self.set_key(k, deck_ui.btn("#0b0f1a", []))
+        self.set_key(KEY_QUANT, deck_ui.btn("#0e7490" if qon else "#1f2937",
+                                            [("QUANT ↻", 10, "#a5f3fc"),
+                                             (qlabel, 15, "#fff" if qon else "#9ca3af")]))
+        self.set_key(KEY_AUTO, deck_ui.btn("#15803d" if self._auto else "#1f2937",
+                                           [("AUTO", 13, "#fff" if self._auto else "#cbd5e1"),
+                                            ("fit→grid" if self._auto else "off", 9,
+                                             "#bbf7d0" if self._auto else "#9ca3af")]))
+        self.set_key(KEY_STOP_ALL, deck_ui.btn("#7f1d1d", [("STOP", 13, "#fecaca"), ("all", 9, "#f87171")]))
         self.render_home_key()
 
     # -- input ---------------------------------------------------------
 
     def on_key(self, _deck, key: int, pressed: bool) -> None:
-        if key < 24:
+        if key < 24 and key % 8 < SCENE_COL:
             self._grid_gesture(key, pressed)
             return
         if not pressed:
@@ -170,11 +189,14 @@ class SessionLooper(ControlSurface):
             self.on_home()
         elif self.client is None:
             return
-        elif key in (24, 25, 26):
-            self.client.fire_scene(key - 24)
+        elif key in SCENE_KEYS:
+            self.client.fire_scene(SCENE_KEYS.index(key))
         elif key == KEY_STOP_ALL:
             self.client.stop_all_clips()
-        elif key == KEY_QUANTIZE:
+        elif key == KEY_AUTO:
+            self._auto = not self._auto
+            self.render()
+        elif key == KEY_QUANT:
             with self.client.state.lock:
                 cur = self.client.state.global_quant
             vals = [v for v, _ in QUANT_CYCLE]
@@ -183,11 +205,9 @@ class SessionLooper(ControlSurface):
             self.render()
 
     def _grid_gesture(self, key: int, pressed: bool) -> None:
-        """Tap = fire (record empty / launch clip); long press an occupied clip
-        = trim it to its content and align the loop to the beat grid."""
         if self.client is None:
             return
-        s, t = divmod(key, 8)
+        s, t = key // 8, key % 8
         st = self.client.state
         with st.lock:
             has = st.slot_has_clip.get((t, s), False)
@@ -199,16 +219,17 @@ class SessionLooper(ControlSurface):
             return
         dt = time.monotonic() - self._press_t.pop(key, time.monotonic())
         if has and dt >= LONG_PRESS:
-            self.set_key(key, deck_ui.btn("#fbbf24", [("TRIM", 13, "#0b0f1a")]))  # flash
+            self.set_key(key, deck_ui.btn("#fbbf24", [("TRIM", 13, "#0b0f1a")]))
             threading.Thread(target=self._trim, args=(t, s), daemon=True).start()
             return
         if not has:
-            self.client.set_arm(t, True)   # auto-arm so the empty slot records
+            self.client.set_arm(t, True)
         self.client.fire_clip_slot(t, s)
 
-    def _trim(self, t: int, s: int) -> None:
-        """Read the clip's file, find the content bounds, and set a beat-aligned
-        loop to just that — the 'find start/end + align to grid' button."""
+    def _trim(self, t: int, s: int, play: bool = False) -> None:
+        """Find the clip's content, set a beat-aligned loop, and warp+quantize
+        it to the grid so the phrase locks to the rhythm. `play` re-launches the
+        clip afterwards (used right after a recording finishes)."""
         import math
         c = self.client
         print(f"[session] trim t={t} s={s} — requested")
@@ -220,7 +241,7 @@ class SessionLooper(ControlSurface):
         path = c.state.slot_file_path.get((t, s))
         if not path:
             c._send("/live/clip/get/file_path", t, s)
-            for _ in range(30):
+            for _ in range(40):
                 time.sleep(0.05)
                 path = c.state.slot_file_path.get((t, s))
                 if path:
@@ -228,36 +249,24 @@ class SessionLooper(ControlSurface):
         if not path:
             print(f"[session] trim t={t} s={s}: no file path from Live")
             return
-        print(f"[session] trim file: {path}")
-        r = audio_trim.content_bounds(path)   # auto noise-floor threshold
+        r = audio_trim.content_bounds(path)
         if not r:
             print("[session] trim: content_bounds returned None (read failed?)")
             return
         start_sec, end_sec, dur, sr = r
         print(f"[session] trim: {audio_trim.content_bounds.info}")
         bpm = max(c.state.tempo, 1.0)
-        spb = 60.0 / bpm                       # seconds per beat (clip warped to host)
-        ls = max(0.0, float(math.floor(start_sec / spb)))   # snap start down to a beat
-        le = float(math.ceil(end_sec / spb))                # snap end up to a beat
+        spb = 60.0 / bpm
+        ls = max(0.0, float(math.floor(start_sec / spb)))
+        le = float(math.ceil(end_sec / spb))
         if le <= ls:
             le = ls + 1.0
-        # read the clip's current loop for diagnosis
-        c._send("/live/clip/get/loop_start", t, s)
-        c._send("/live/clip/get/loop_end", t, s)
-        time.sleep(0.15)
-        cur = (c.state.slot_loop_start.get((t, s)), c.state.slot_loop_end.get((t, s)))
-        print(f"[session] trim: file content {start_sec:.2f}-{end_sec:.2f}s of {dur:.2f}s @ "
-              f"{bpm:.1f}bpm | current loop {cur} -> set loop {ls:.0f}-{le:.0f} beats (no crop)")
+        print(f"[session] trim: content {start_sec:.2f}-{end_sec:.2f}s of {dur:.2f}s @ "
+              f"{bpm:.1f}bpm -> loop {ls:.0f}-{le:.0f} beats")
         c.set_clip_loop(t, s, ls, le)
-        # lock to the rhythm: warp on + native quantize transients to the grid
         c.set_clip_warp(t, s, True)
         time.sleep(0.1)
         c.clip_quantize(t, s, QUANTIZE_GRID, 1.0)
-        print(f"[session] trim: warp on + quantize grid={QUANTIZE_GRID}")
-        # read back to confirm Live applied it
-        time.sleep(0.2)
-        c._send("/live/clip/get/loop_start", t, s)
-        c._send("/live/clip/get/loop_end", t, s)
-        time.sleep(0.15)
-        print(f"[session] trim: loop after set = "
-              f"{c.state.slot_loop_start.get((t, s))}-{c.state.slot_loop_end.get((t, s))}")
+        if play:
+            time.sleep(0.1)
+            c.fire_clip_slot(t, s)   # play the freshly-fitted loop
