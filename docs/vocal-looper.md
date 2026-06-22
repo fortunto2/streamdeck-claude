@@ -28,25 +28,27 @@ So just add a Looper to each vocal track — the page populates itself. Put the 
 (reverb, distortion, compressor) as the other devices on the same track; the
 first three non-looper devices become FX1/FX2/FX3.
 
-## One-time MIDI mapping (LOOP / CLR / ÷2 / ×2)
+## One-time MIDI mapping
 
-For each layer (row) you map the looper's buttons in Live. MIDI is **channel 16**:
+**Row 1 (top) is the main looper — it reuses the Ableton page's notes, so if you
+already mapped the looper there, the top row already works. You only map the
+extra loopers (rows 2-4).** MIDI is **channel 16**:
 
 | Layer (row) | LOOP → note | CLR → note | ÷2 → note | ×2 → note |
 |---|---|---|---|---|
-| 1 (top)  | 90 | 94 | 98  | 102 |
-| 2        | 91 | 95 | 99  | 103 |
-| 3        | 92 | 96 | 100 | 104 |
-| 4        | 93 | 97 | 101 | 105 |
+| 1 (top, = Ableton page) | 113 | 110 | 111 | 112 |
+| 2 | 114 | 115 | 116 | 117 |
+| 3 | 118 | 119 | 120 | 121 |
+| 4 | 122 | 123 | 124 | 125 |
 
-To map: in Live, MIDI-map mode (Cmd-M) → click the Looper's big multi-purpose
-button → press the deck's **LOOP** key for that row → it learns note 90+row.
-Then map that looper's **Clear** to **CLR**, and **÷2**/**×2** to the **LEN** key
-(tap learns ×2 = note 102+row; hold learns ÷2 = note 98+row). The input port must
-have **Remote ✓** for Bus 1 (Settings → Tempo & MIDI → Input Ports → sdeck Bus 1).
+To map an extra looper: in Live, MIDI-map mode (Cmd-M) → click that Looper's big
+multi-purpose button → press the deck's **LOOP** key for that row → it learns the
+note. Then map its **Clear** to **CLR**, and **÷2**/**×2** to the **LEN** key
+(tap learns ×2, hold learns ÷2). The input port must have **Remote ✓** for Bus 1
+(Settings → Tempo & MIDI → Input Ports → sdeck Bus 1).
 
-At minimum map **LOOP** per row — that alone gives you per-looper record/play/
-overdub. CLR and ÷2/×2 are optional extras.
+At minimum map **LOOP** per row — that alone gives per-looper record/play/overdub.
+CLR and ÷2/×2 are optional extras.
 
 ## Notes
 

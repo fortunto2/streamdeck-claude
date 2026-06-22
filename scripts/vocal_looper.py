@@ -13,8 +13,9 @@ khomus drone, live khomus… Per row, left→right:
 - MUTE / ARM toggle the track over OSC. VU mirrors the track level. The LOOP
   LED mirrors Live's record/play/overdub state.
 
-Map once in Live: each looper's transport button → note (90+row), its clear →
-note (94+row), MIDI channel 16. See docs/vocal-looper.md.
+Row 0 (top) is the main looper — it reuses the Ableton page's MIDI notes, so
+its existing mapping just works; only the extra loopers (rows 1-3) need mapping.
+See docs/vocal-looper.md for the per-row note table.
 """
 
 from __future__ import annotations
@@ -35,10 +36,18 @@ except Exception:  # pragma: no cover
 
 LAYERS = 4
 VL_MIDI_CH = 15            # MIDI channel 16 → Bus 1 (looper buttons)
-VL_TRANSPORT_BASE = 90    # transport note = base + row
-VL_CLEAR_BASE = 94        # clear note     = base + row
-VL_HALF_BASE = 98         # ÷2 note        = base + row
-VL_DOUBLE_BASE = 102      # ×2 note        = base + row
+
+# Per-row looper MIDI notes. Row 0 is the "main" looper — SAME notes as the
+# Ableton page (transport 113 / clear 110 / ÷2 111 / ×2 112), so its existing
+# mapping carries over and you only map the extra loopers (rows 1-3).
+def _build_row_notes(n: int) -> list[dict]:
+    rows = [{"transport": 113, "clear": 110, "half": 111, "double": 112}]
+    for r in range(1, n):
+        b = 114 + (r - 1) * 4   # row1:114-117  row2:118-121  row3:122-125
+        rows.append({"transport": b, "clear": b + 1, "half": b + 2, "double": b + 3})
+    return rows
+
+ROW_NOTES = _build_row_notes(LAYERS)
 FPS = 4.0
 LONG_PRESS = 0.35
 KEY_HOME = ControlSurface.HOME_KEY  # 31
@@ -185,20 +194,21 @@ class VocalLooper(ControlSurface):
         tracks = self.client.vocal_tracks(LAYERS)
         if row >= len(tracks):
             return
+        notes = ROW_NOTES[row]
         if col == 7:   # LEN — tap = ×2, hold = ÷2 (press/release timing)
             if pressed:
                 self._press_t[key] = time.monotonic()
                 return
             held = (time.monotonic() - self._press_t.pop(key, time.monotonic())) >= LONG_PRESS
-            self._looper_midi((VL_HALF_BASE if held else VL_DOUBLE_BASE) + row)
+            self._looper_midi(notes["half"] if held else notes["double"])
             return
         if not pressed:
             return
         track = tracks[row]
         if col == 0:
-            self._looper_midi(VL_TRANSPORT_BASE + row)   # transport tap (MIDI)
+            self._looper_midi(notes["transport"])   # transport tap (MIDI)
         elif col == 1:
-            self._looper_midi(VL_CLEAR_BASE + row)        # clear (MIDI)
+            self._looper_midi(notes["clear"])         # clear (MIDI)
         elif col in (2, 3, 4):
             fx = self.client.fx_devices(track, 3)
             j = col - 2
