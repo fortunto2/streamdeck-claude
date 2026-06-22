@@ -51,7 +51,10 @@ class SessionLooper(ControlSurface):
     def start(self) -> None:
         self.running = True
         try:
-            self.client = AbletonClient(on_change=lambda: self.request_repaint())
+            # No on_change repaint: the poll thread is the SINGLE renderer, so
+            # two threads never blit concurrently (that raced the set_key cache
+            # and flickered during recording). State updates show within 1/FPS.
+            self.client = AbletonClient(on_change=lambda: None)
             self.client.start()
             self.client.refresh()
         except Exception:
