@@ -17,11 +17,18 @@ except Exception:  # pragma: no cover
     sf = None
 
 
-def content_bounds(path: str, top_db: float = 30.0, frame: int = 1024):
-    """Return (start_sec, end_sec, duration_sec, sr) of the non-silent region.
+def content_bounds(path: str, floor_pct: float = 20.0, margin_db: float = 10.0,
+                   min_span_db: float = 8.0, frame: int = 1024):
+    """Return (start_sec, end_sec, duration_sec, sr) of the actual signal.
 
-    `top_db` — how far below the peak still counts as silence (bigger = trims
-    more aggressively). Returns the full clip if it can't read / is all silence.
+    Auto-threshold relative to the NOISE FLOOR (not the peak), so steady
+    background noise/hum doesn't count as content — we look for where the
+    energy jumps well above the floor. The threshold sits `margin_db` above an
+    estimate of the noise floor (the `floor_pct` percentile of the envelope),
+    or 35 % of the way up to the peak, whichever is higher. If there's no clear
+    jump (floor and peak within `min_span_db`), the clip is left untrimmed.
+
+    Also returns the decision info via the `info` attribute for logging.
     """
     if np is None or sf is None:
         return None
@@ -31,24 +38,30 @@ def content_bounds(path: str, top_db: float = 30.0, frame: int = 1024):
         return None
     mono = y.mean(axis=1)
     n = len(mono)
-    if n == 0:
-        return (0.0, 0.0, 0.0, sr)
+    dur = n / sr if sr else 0.0
     nf = n // frame
-    if nf < 1:
-        dur = n / sr
+    if nf < 2:
         return (0.0, dur, dur, sr)
     env = np.sqrt((mono[:nf * frame].reshape(nf, frame) ** 2).mean(axis=1))
-    peak = float(env.max())
-    dur = n / sr
-    if peak <= 0.0:
-        return (0.0, dur, dur, sr)
-    thresh = peak * (10.0 ** (-top_db / 20.0))
-    above = np.where(env > thresh)[0]
+    env_db = 20.0 * np.log10(env + 1e-9)
+    floor = float(np.percentile(env_db, floor_pct))   # background noise level
+    peak = float(env_db.max())
+    span = peak - floor
+    if span < min_span_db:
+        return (0.0, dur, dur, sr)                     # no clear jump — leave it
+    thresh = floor + max(margin_db, 0.35 * span)
+    above = np.where(env_db > thresh)[0]
     if len(above) == 0:
         return (0.0, dur, dur, sr)
     start = above[0] * frame
     end = min((above[-1] + 1) * frame, n)
-    return (start / sr, end / sr, dur, sr)
+    res = (start / sr, end / sr, dur, sr)
+    content_bounds.info = (f"floor={floor:.1f}dB peak={peak:.1f}dB "
+                           f"thresh={thresh:.1f}dB span={span:.1f}dB")
+    return res
+
+
+content_bounds.info = ""
 
 
 if __name__ == "__main__":

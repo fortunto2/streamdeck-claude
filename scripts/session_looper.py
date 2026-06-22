@@ -226,19 +226,30 @@ class SessionLooper(ControlSurface):
             print(f"[session] trim t={t} s={s}: no file path from Live")
             return
         print(f"[session] trim file: {path}")
-        r = audio_trim.content_bounds(path, top_db=45.0)
+        r = audio_trim.content_bounds(path)   # auto noise-floor threshold
         if not r:
             print("[session] trim: content_bounds returned None (read failed?)")
             return
         start_sec, end_sec, dur, sr = r
+        print(f"[session] trim: {audio_trim.content_bounds.info}")
         bpm = max(c.state.tempo, 1.0)
         spb = 60.0 / bpm                       # seconds per beat (clip warped to host)
         ls = max(0.0, float(math.floor(start_sec / spb)))   # snap start down to a beat
         le = float(math.ceil(end_sec / spb))                # snap end up to a beat
         if le <= ls:
             le = ls + 1.0
-        print(f"[session] trim: content {start_sec:.2f}-{end_sec:.2f}s of {dur:.2f}s "
-              f"@ {bpm:.1f}bpm -> loop {ls:.0f}-{le:.0f} beats, then crop")
-        c.set_clip_loop(t, s, ls, le)
+        # read the clip's current loop for diagnosis
+        c._send("/live/clip/get/loop_start", t, s)
+        c._send("/live/clip/get/loop_end", t, s)
         time.sleep(0.15)
-        c.clip_crop(t, s)   # native: bake the loop into the file → visible trim
+        cur = (c.state.slot_loop_start.get((t, s)), c.state.slot_loop_end.get((t, s)))
+        print(f"[session] trim: file content {start_sec:.2f}-{end_sec:.2f}s of {dur:.2f}s @ "
+              f"{bpm:.1f}bpm | current loop {cur} -> set loop {ls:.0f}-{le:.0f} beats (no crop)")
+        c.set_clip_loop(t, s, ls, le)
+        # read back to confirm Live applied it
+        time.sleep(0.2)
+        c._send("/live/clip/get/loop_start", t, s)
+        c._send("/live/clip/get/loop_end", t, s)
+        time.sleep(0.15)
+        print(f"[session] trim: loop after set = "
+              f"{c.state.slot_loop_start.get((t, s))}-{c.state.slot_loop_end.get((t, s))}")
