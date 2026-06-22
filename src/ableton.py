@@ -646,6 +646,9 @@ class AbletonClient:
     def stop_track_clips(self, track: int) -> None:
         self._send("/live/track/stop_all_clips", track)
 
+    def delete_clip_slot(self, track: int, scene: int) -> None:
+        self._send("/live/clip_slot/delete_clip", track, scene)
+
     def set_clip_loop(self, track: int, scene: int, start_beats: float, end_beats: float) -> None:
         """Loop a clip between two beat positions (start/end markers + loop)."""
         self._send("/live/clip/set/looping", track, scene, 1)
