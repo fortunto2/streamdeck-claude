@@ -380,8 +380,12 @@ class AbletonClient:
         first_looper = loopers[0]
         with self.state.lock:
             self.state.track_loopers[track] = first_looper
-            changed = self.state.looper != (track, first_looper)
-            self.state.looper = (track, first_looper)   # back-compat: first looper
+            # The Ableton page's single-looper LED points at the lowest-track
+            # looper, deterministically — so adding loopers to vocal tracks for
+            # the Vocal Looper page doesn't clobber it (was: last one found).
+            lowest = min((t, d) for t, d in self.state.track_loopers.items())
+            changed = self.state.looper != lowest
+            self.state.looper = lowest
         # Looper State → LED (mirrors Live UI / foot pedal too).
         self._send("/live/device/start_listen/parameter/value", track, first_looper, LOOPER_STATE_PARAM)
         self._send("/live/device/get/parameter/value", track, first_looper, LOOPER_STATE_PARAM)
