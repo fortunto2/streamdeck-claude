@@ -33,6 +33,9 @@ KEY_HOME = ControlSurface.HOME_KEY  # 31
 # Global quantization cycle (Live enum, label). 1 Bar makes loops record on the
 # bar by default; trimming aligns to the same grid.
 QUANT_CYCLE = [(4, "1 Bar"), (3, "2 Bar"), (7, "1/4"), (0, "Off")]
+# Live Quantization enum for warping clip transients to the grid on trim
+# (7=1/4, 9=1/8, 11=1/16). 1/16 locks rhythmic phrases tightest.
+QUANTIZE_GRID = 11
 
 
 class SessionLooper(ControlSurface):
@@ -246,6 +249,11 @@ class SessionLooper(ControlSurface):
         print(f"[session] trim: file content {start_sec:.2f}-{end_sec:.2f}s of {dur:.2f}s @ "
               f"{bpm:.1f}bpm | current loop {cur} -> set loop {ls:.0f}-{le:.0f} beats (no crop)")
         c.set_clip_loop(t, s, ls, le)
+        # lock to the rhythm: warp on + native quantize transients to the grid
+        c.set_clip_warp(t, s, True)
+        time.sleep(0.1)
+        c.clip_quantize(t, s, QUANTIZE_GRID, 1.0)
+        print(f"[session] trim: warp on + quantize grid={QUANTIZE_GRID}")
         # read back to confirm Live applied it
         time.sleep(0.2)
         c._send("/live/clip/get/loop_start", t, s)

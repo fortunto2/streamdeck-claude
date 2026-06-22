@@ -662,6 +662,10 @@ class AbletonClient:
         """Native Quantize — snap the clip's transients/warp to the grid."""
         self._send("/live/clip/quantize", track, scene, int(quantization), float(amount))
 
+    def set_clip_warp(self, track: int, scene: int, on: bool) -> None:
+        """Warp on locks the clip to the host tempo (so it grooves in time)."""
+        self._send("/live/clip/set/warping", track, scene, 1 if on else 0)
+
     def set_global_quantize(self, value: int) -> None:
         """Set clip-launch/record quantization (Live enum: 0=None,4=1Bar,…)."""
         self._send("/live/song/set/clip_trigger_quantization", int(value))
