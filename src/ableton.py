@@ -63,6 +63,9 @@ class SessionState:
         self.slot_has_clip: dict[tuple[int, int], bool] = {}
         self.slot_recording: dict[tuple[int, int], bool] = {}
         self.slot_color: dict[tuple[int, int], int] = {}
+        self.slot_file_path: dict[tuple[int, int], str] = {}
+        # Global clip-launch/record quantization (Live enum: 0=None,4=1Bar,…).
+        self.global_quant = 4
         self.track_names: dict[int, str] = {}
         self.track_mute: dict[int, bool] = {}
         self.track_arm: dict[int, bool] = {}
@@ -146,6 +149,8 @@ class AbletonClient:
         disp.map("/live/clip_slot/get/has_clip", self._h_slot_has_clip)
         disp.map("/live/clip/get/is_recording", self._h_clip_recording)
         disp.map("/live/clip/get/color", self._h_clip_color)
+        disp.map("/live/clip/get/file_path", self._h_clip_file_path)
+        disp.map("/live/song/get/clip_trigger_quantization", self._h_global_quant)
         disp.map("/live/song/get/beat", self._h_beat)
         disp.map("/live/song/get/signature_numerator", self._h_sig_num)
         disp.map("/live/song/get/signature_denominator", self._h_sig_denom)
@@ -202,6 +207,8 @@ class AbletonClient:
         self._send("/live/song/get/session_record")
         self._send("/live/song/start_listen/is_playing")
         self._send("/live/song/start_listen/session_record")
+        self._send("/live/song/get/clip_trigger_quantization")
+        self._send("/live/song/start_listen/clip_trigger_quantization")
         self._send("/live/song/get/signature_numerator")
         self._send("/live/song/get/signature_denominator")
         self._send("/live/song/start_listen/signature_numerator")
@@ -354,6 +361,7 @@ class AbletonClient:
             self._send("/live/clip/get/is_recording", t, s)
             self._send("/live/clip/start_listen/color", t, s)
             self._send("/live/clip/get/color", t, s)
+            self._send("/live/clip/get/file_path", t, s)   # for offline trim
         if changed:
             self._notify()
 
@@ -383,6 +391,27 @@ class AbletonClient:
             self.state.slot_color[key] = c
         if changed:
             self._notify()
+
+    def _h_clip_file_path(self, addr, *args):
+        self._touch()
+        if len(args) < 3:
+            return
+        key = (int(args[0]), int(args[1]))
+        with self.state.lock:
+            self.state.slot_file_path[key] = str(args[2])
+
+    def _h_global_quant(self, addr, *args):
+        self._touch()
+        if args:
+            try:
+                q = int(args[0])
+            except (TypeError, ValueError):
+                return
+            with self.state.lock:
+                changed = self.state.global_quant != q
+                self.state.global_quant = q
+            if changed:
+                self._notify()
 
     def _h_beat(self, addr, *args):
         # Fires once per beat. Animated by the presentation poll loop, so
@@ -596,6 +625,21 @@ class AbletonClient:
 
     def stop_track_clips(self, track: int) -> None:
         self._send("/live/track/stop_all_clips", track)
+
+    def set_clip_loop(self, track: int, scene: int, start_beats: float, end_beats: float) -> None:
+        """Loop a clip between two beat positions (start/end markers + loop)."""
+        self._send("/live/clip/set/looping", track, scene, 1)
+        self._send("/live/clip/set/start_marker", track, scene, float(start_beats))
+        self._send("/live/clip/set/loop_start", track, scene, float(start_beats))
+        self._send("/live/clip/set/loop_end", track, scene, float(end_beats))
+        self._send("/live/clip/set/end_marker", track, scene, float(end_beats))
+
+    def set_global_quantize(self, value: int) -> None:
+        """Set clip-launch/record quantization (Live enum: 0=None,4=1Bar,…)."""
+        self._send("/live/song/set/clip_trigger_quantization", int(value))
+        with self.state.lock:
+            self.state.global_quant = int(value)
+        self._notify()
 
     def play(self) -> None:
         self._send("/live/song/start_playing")

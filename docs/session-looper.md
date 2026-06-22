@@ -12,8 +12,13 @@ stack, and you can drag a clip onto a Drum Rack pad / merge / export by hand.
   the bar when Session record quantize is set) → the clip loops.
 - **Tap an occupied clip** → launch / relaunch it. Playing = bright + white
   border; queued = blink; recording = red blink.
-- **Bottom row:** SCENE 1-3 fire a whole row (every track's clip together — the
-  "master layer"); STOP = stop all clips; HOME.
+- **Long-press an occupied clip** → **trim + align**: the daemon reads the
+  clip's recorded file off disk (soundfile + numpy, like librosa.effects.trim),
+  finds where the sound actually starts/ends, and sets a **beat-aligned loop**
+  to just that. (OSC can't see audio — we read the file directly.)
+- **Bottom row:** SCENE 1-3 fire a whole row (the "master layer"); STOP = stop
+  all; **QUANT ↻** cycles global launch/record quantization (1 Bar / 2 Bar / 1/4
+  / Off) so loops record on the grid by default; HOME.
 
 ## Setup in Live
 

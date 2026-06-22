@@ -25,8 +25,14 @@ from src.ableton import AbletonClient
 COLS = 8        # tracks shown
 ROWS = 3        # scene slots shown
 FPS = 6.0       # blink animation rate
+LONG_PRESS = 0.4
 KEY_STOP_ALL = 27
+KEY_QUANTIZE = 28   # cycle global launch/record quantization
 KEY_HOME = ControlSurface.HOME_KEY  # 31
+
+# Global quantization cycle (Live enum, label). 1 Bar makes loops record on the
+# bar by default; trimming aligns to the same grid.
+QUANT_CYCLE = [(4, "1 Bar"), (3, "2 Bar"), (7, "1/4"), (0, "Off")]
 
 
 class SessionLooper(ControlSurface):
@@ -35,6 +41,7 @@ class SessionLooper(ControlSurface):
         super().__init__(deck, on_home)
         self.client: AbletonClient | None = None
         self._poll_thread: threading.Thread | None = None
+        self._press_t: dict[int, float] = {}
 
     def start(self) -> None:
         self.running = True
@@ -137,33 +144,88 @@ class SessionLooper(ControlSurface):
             self.set_key(24 + i, deck_ui.btn("#1e293b", [("SCENE", 9, "#94a3b8"),
                                                          (str(i + 1), 18, "#e5e7eb")]))
         self.set_key(KEY_STOP_ALL, deck_ui.btn("#7f1d1d", [("STOP", 13, "#fecaca"), ("all", 9, "#f87171")]))
-        for k in (28, 29, 30):
+        with self.client.state.lock:
+            q = self.client.state.global_quant
+        qlabel = next((lbl for v, lbl in QUANT_CYCLE if v == q), str(q))
+        qon = q != 0
+        self.set_key(KEY_QUANTIZE, deck_ui.btn("#0e7490" if qon else "#1f2937",
+                                               [("QUANT ↻", 10, "#a5f3fc"),
+                                                (qlabel, 16, "#fff" if qon else "#9ca3af")]))
+        for k in (29, 30):
             self.set_key(k, deck_ui.btn("#0b0f1a", []))
         self.render_home_key()
 
     # -- input ---------------------------------------------------------
 
     def on_key(self, _deck, key: int, pressed: bool) -> None:
+        if key < 24:
+            self._grid_gesture(key, pressed)
+            return
         if not pressed:
             return
         if key == KEY_HOME:
             self.on_home()
+        elif self.client is None:
             return
-        if self.client is None:
-            return
-        if key < 24:
-            s, t = divmod(key, 8)   # row = scene, col = track
-            st = self.client.state
-            with st.lock:
-                has = st.slot_has_clip.get((t, s), False)
-                ntracks = st.num_tracks
-            if t >= ntracks:
-                return
-            if not has:
-                self.client.set_arm(t, True)   # auto-arm so the empty slot records
-            self.client.fire_clip_slot(t, s)
-            return
-        if key in (24, 25, 26):
+        elif key in (24, 25, 26):
             self.client.fire_scene(key - 24)
         elif key == KEY_STOP_ALL:
             self.client.stop_all_clips()
+        elif key == KEY_QUANTIZE:
+            with self.client.state.lock:
+                cur = self.client.state.global_quant
+            vals = [v for v, _ in QUANT_CYCLE]
+            i = vals.index(cur) if cur in vals else 0
+            self.client.set_global_quantize(vals[(i + 1) % len(vals)])
+            self.render()
+
+    def _grid_gesture(self, key: int, pressed: bool) -> None:
+        """Tap = fire (record empty / launch clip); long press an occupied clip
+        = trim it to its content and align the loop to the beat grid."""
+        if self.client is None:
+            return
+        s, t = divmod(key, 8)
+        st = self.client.state
+        with st.lock:
+            has = st.slot_has_clip.get((t, s), False)
+            ntracks = st.num_tracks
+        if t >= ntracks:
+            return
+        if pressed:
+            self._press_t[key] = time.monotonic()
+            return
+        dt = time.monotonic() - self._press_t.pop(key, time.monotonic())
+        if has and dt >= LONG_PRESS:
+            threading.Thread(target=self._trim, args=(t, s), daemon=True).start()
+            return
+        if not has:
+            self.client.set_arm(t, True)   # auto-arm so the empty slot records
+        self.client.fire_clip_slot(t, s)
+
+    def _trim(self, t: int, s: int) -> None:
+        """Read the clip's file, find the content bounds, and set a beat-aligned
+        loop to just that — the 'find start/end + align to grid' button."""
+        import math
+        import audio_trim
+        c = self.client
+        path = c.state.slot_file_path.get((t, s))
+        if not path:
+            c._send("/live/clip/get/file_path", t, s)
+            for _ in range(20):
+                time.sleep(0.05)
+                path = c.state.slot_file_path.get((t, s))
+                if path:
+                    break
+        if not path:
+            return
+        r = audio_trim.content_bounds(path, top_db=30.0)
+        if not r:
+            return
+        start_sec, end_sec, _dur, _sr = r
+        bpm = max(c.state.tempo, 1.0)
+        spb = 60.0 / bpm                       # seconds per beat (clip warped to host)
+        ls = max(0.0, float(math.floor(start_sec / spb)))   # snap start down to a beat
+        le = float(math.ceil(end_sec / spb))                # snap end up to a beat
+        if le <= ls:
+            le = ls + 1.0
+        c.set_clip_loop(t, s, ls, le)
