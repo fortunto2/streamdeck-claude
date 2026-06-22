@@ -64,6 +64,8 @@ class SessionState:
         self.slot_recording: dict[tuple[int, int], bool] = {}
         self.slot_color: dict[tuple[int, int], int] = {}
         self.slot_file_path: dict[tuple[int, int], str] = {}
+        self.slot_loop_start: dict[tuple[int, int], float] = {}
+        self.slot_loop_end: dict[tuple[int, int], float] = {}
         # Global clip-launch/record quantization (Live enum: 0=None,4=1Bar,…).
         self.global_quant = 4
         self.track_names: dict[int, str] = {}
@@ -150,6 +152,8 @@ class AbletonClient:
         disp.map("/live/clip/get/is_recording", self._h_clip_recording)
         disp.map("/live/clip/get/color", self._h_clip_color)
         disp.map("/live/clip/get/file_path", self._h_clip_file_path)
+        disp.map("/live/clip/get/loop_start", self._h_clip_loop_start)
+        disp.map("/live/clip/get/loop_end", self._h_clip_loop_end)
         disp.map("/live/song/get/clip_trigger_quantization", self._h_global_quant)
         disp.map("/live/song/get/beat", self._h_beat)
         disp.map("/live/song/get/signature_numerator", self._h_sig_num)
@@ -400,6 +404,22 @@ class AbletonClient:
         with self.state.lock:
             self.state.slot_file_path[key] = str(args[2])
 
+    def _h_clip_loop_start(self, addr, *args):
+        self._touch()
+        if len(args) >= 3:
+            try:
+                self.state.slot_loop_start[(int(args[0]), int(args[1]))] = float(args[2])
+            except (TypeError, ValueError):
+                pass
+
+    def _h_clip_loop_end(self, addr, *args):
+        self._touch()
+        if len(args) >= 3:
+            try:
+                self.state.slot_loop_end[(int(args[0]), int(args[1]))] = float(args[2])
+            except (TypeError, ValueError):
+                pass
+
     def _h_global_quant(self, addr, *args):
         self._touch()
         if args:
@@ -633,6 +653,14 @@ class AbletonClient:
         self._send("/live/clip/set/loop_start", track, scene, float(start_beats))
         self._send("/live/clip/set/loop_end", track, scene, float(end_beats))
         self._send("/live/clip/set/end_marker", track, scene, float(end_beats))
+
+    def clip_crop(self, track: int, scene: int) -> None:
+        """Native Crop — bake the current loop into the sample (trims the file)."""
+        self._send("/live/clip/crop", track, scene)
+
+    def clip_quantize(self, track: int, scene: int, quantization: int = 4, amount: float = 1.0) -> None:
+        """Native Quantize — snap the clip's transients/warp to the grid."""
+        self._send("/live/clip/quantize", track, scene, int(quantization), float(amount))
 
     def set_global_quantize(self, value: int) -> None:
         """Set clip-launch/record quantization (Live enum: 0=None,4=1Bar,…)."""

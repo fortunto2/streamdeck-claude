@@ -226,7 +226,7 @@ class SessionLooper(ControlSurface):
             print(f"[session] trim t={t} s={s}: no file path from Live")
             return
         print(f"[session] trim file: {path}")
-        r = audio_trim.content_bounds(path, top_db=30.0)
+        r = audio_trim.content_bounds(path, top_db=45.0)
         if not r:
             print("[session] trim: content_bounds returned None (read failed?)")
             return
@@ -238,5 +238,7 @@ class SessionLooper(ControlSurface):
         if le <= ls:
             le = ls + 1.0
         print(f"[session] trim: content {start_sec:.2f}-{end_sec:.2f}s of {dur:.2f}s "
-              f"@ {bpm:.1f}bpm -> loop {ls:.0f}-{le:.0f} beats")
+              f"@ {bpm:.1f}bpm -> loop {ls:.0f}-{le:.0f} beats, then crop")
         c.set_clip_loop(t, s, ls, le)
+        time.sleep(0.15)
+        c.clip_crop(t, s)   # native: bake the loop into the file → visible trim
