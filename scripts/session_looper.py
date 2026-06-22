@@ -140,23 +140,31 @@ class SessionLooper(ControlSurface):
     def render(self) -> None:
         if not self.running:
             return
-        for k in range(32):
-            if k != KEY_HOME:
-                self.set_key(k, deck_ui.btn("#0b0f1a", []))
+        # Set every key directly to its final image (NO pre-blank to black —
+        # that re-blitted all 32 keys every frame and defeated the cache =
+        # flicker). The grid covers cols 0-6; the control column covers col 7.
         if self.client is None:
-            self.set_key(0, deck_ui.btn("#7f1d1d", [("no OSC", 12, "#fecaca")]))
+            for s in range(SCENES):
+                for t in range(TRACKS):
+                    self.set_key(s * 8 + t,
+                                 deck_ui.btn("#7f1d1d", [("no OSC", 12, "#fecaca")]) if s * 8 + t == 0
+                                 else deck_ui.btn("#0b0f1a", []))
+            for k in (KEY_QUANT, KEY_AUTO, KEY_STOP_ALL):
+                self.set_key(k, deck_ui.btn("#0b0f1a", []))
             self.render_home_key()
             return
         with self.client.state.lock:
             ntracks = self.client.state.num_tracks
             q = self.client.state.global_quant
-        if ntracks == 0:
-            self.set_key(0, deck_ui.btn("#1f2937", [("waiting", 11, "#cbd5e1"),
-                                                    ("for Live", 12, "#fff")]))
-        else:
-            for s in range(SCENES):
-                for t in range(TRACKS):
-                    self.set_key(s * 8 + t, self._cell_img(t, s))
+        for s in range(SCENES):
+            for t in range(TRACKS):
+                k = s * 8 + t
+                if ntracks == 0:
+                    self.set_key(k, deck_ui.btn("#1f2937", [("waiting", 11, "#cbd5e1"),
+                                                            ("for Live", 12, "#fff")]) if k == 0
+                                 else deck_ui.btn("#0b0f1a", []))
+                else:
+                    self.set_key(k, self._cell_img(t, s))
         # control column (right)
         qlabel = next((lbl for v, lbl in QUANT_CYCLE if v == q), str(q))
         qon = q != 0
