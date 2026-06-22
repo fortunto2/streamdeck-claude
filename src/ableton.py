@@ -392,22 +392,27 @@ class AbletonClient:
 
     def _recompute_active_looper(self) -> None:
         """Point the single-looper view (Ableton page LED + Clear/×2/÷2 keys)
-        at the looper on the currently selected Live track — so it follows the
-        loop you're working on, not whichever was detected last. Falls back to
-        the lowest-track looper when the selected track has none."""
+        at the looper that's actually in use: a non-stopped looper (recording /
+        playing / overdubbing) wins; else the looper on the selected Live track;
+        else the lowest-track looper. So the LED tracks whichever loop is live."""
         with self.state.lock:
-            sel = self.state.selected_track
             lps = self.state.track_loopers
-            if sel is not None and sel in lps:
-                new = (sel, lps[sel])
+            states = self.state.looper_states
+            active = [t for t in lps if states.get(t, LOOPER_STOP) != LOOPER_STOP]
+            sel = self.state.selected_track
+            if len(active) == 1:
+                t = active[0]
+            elif sel is not None and sel in lps:
+                t = sel
             elif lps:
-                new = min(lps.items())
+                t = min(lps)
             else:
-                new = None
+                t = None
+            new = (t, lps[t]) if t is not None else None
             changed = self.state.looper != new
             self.state.looper = new
             if new is not None:
-                self.state.looper_state = self.state.looper_states.get(new[0], LOOPER_STOP)
+                self.state.looper_state = states.get(t, LOOPER_STOP)
         if changed:
             self._notify()
 
@@ -420,7 +425,6 @@ class AbletonClient:
         except (TypeError, ValueError):
             return
         with self.state.lock:
-            lp = self.state.looper
             is_looper = self.state.track_loopers.get(track) == device
         changed = False
         if param == LOOPER_STATE_PARAM and is_looper:
@@ -428,8 +432,10 @@ class AbletonClient:
             with self.state.lock:
                 changed = self.state.looper_states.get(track) != v
                 self.state.looper_states[track] = v
-                if lp == (track, device):
-                    self.state.looper_state = v   # back-compat (first looper)
+            if changed:
+                self._recompute_active_looper()   # a looper went live → follow it
+                self._notify()
+            return
         elif param == DEVICE_ON_PARAM:
             on = value >= 0.5
             with self.state.lock:

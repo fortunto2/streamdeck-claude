@@ -244,13 +244,15 @@ class AbletonControl(ControlSurface):
             d.rectangle([0, 0, 95, 95], outline="#fbbf24", width=3)
         self.set_key(KEY_PLAY, img)
 
-    def _loop_img(self, state: int) -> Image.Image:
+    def _loop_img(self, state: int, track: int | None = None, name: str = "") -> Image.Image:
         bg, glyph, label, col = self._LOOP_CFG.get(state, self._LOOP_CFG[0])
-        hint = "LOOP" if state == 0 else "hold=stop"
+        where = f"T{track + 1}" if track is not None else "?"
+        if name:
+            where += " " + name[:6]
         return deck_ui.btn(bg, [
-            (glyph, 32, col),
-            (label, 13, col),
-            (hint, 9, "#9ca3af" if state == 0 else "#fde68a"),
+            (glyph, 30, col),
+            (label, 12, col),
+            (where, 10, "#fcd34d"),
         ])
 
     @staticmethod
@@ -419,7 +421,8 @@ class AbletonControl(ControlSurface):
                                                        ("scenes", 10, "#64748b")]))
         # Key 30 = Looper control when a Looper device exists, else sync.
         if looper is not None:
-            self.set_key(KEY_REFRESH, self._loop_img(looper_state))
+            self.set_key(KEY_REFRESH, self._loop_img(
+                looper_state, looper[0], track_names.get(looper[0], "")))
         else:
             self.set_key(KEY_REFRESH, deck_ui.btn("#0c4a6e",
                                                   [("↻", 24, "#7dd3fc"), ("sync", 11, "#38bdf8")]))
